@@ -96,6 +96,7 @@ class GameBoyCore {
 	lastIteration: number;
 	firstIteration: number;
 	cBATT: boolean;
+
 	channel1FrequencyTracker: number;
 	channel1FrequencyCounter: number;
 	channel1totalLength: number;

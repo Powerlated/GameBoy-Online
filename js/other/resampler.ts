@@ -5,7 +5,13 @@ class Resampler {
 	channels: number;
 	outputBufferSize: any;
 	noReturn: boolean;
-	
+	resampler: (buffer: any) => any;
+	ratioWeight: number;
+	lastWeight: number;
+	tailExists: boolean;
+	outputBuffer: any;
+	lastOutput: Float32Array;
+
 	constructor(fromSampleRate, toSampleRate, channels, outputBufferSize, noReturn) {
 		this.fromSampleRate = fromSampleRate;
 		this.toSampleRate = toSampleRate;
@@ -15,7 +21,7 @@ class Resampler {
 		this.initialize();
 	}
 
-	initialize = function () {
+	initialize() {
 		//Perform some checks:
 		if (this.fromSampleRate > 0 && this.toSampleRate > 0 && this.channels > 0) {
 			if (this.fromSampleRate == this.toSampleRate) {
@@ -51,7 +57,7 @@ class Resampler {
 			throw (new Error("Invalid settings specified for the resampler."));
 		}
 	};
-	compileLinearInterpolationFunction = function () {
+	compileLinearInterpolationFunction() {
 		var toCompile = "var bufferLength = buffer.length;\
 	var outLength = this.outputBufferSize;\
 	if ((bufferLength % " + this.channels + ") == 0) {\
@@ -94,7 +100,7 @@ class Resampler {
 	}";
 		this.resampler = Function("buffer", toCompile);
 	};
-	compileMultiTapFunction = function () {
+	compileMultiTapFunction() {
 		var toCompile = "var bufferLength = buffer.length;\
 	var outLength = this.outputBufferSize;\
 	if ((bufferLength % " + this.channels + ") == 0) {\
@@ -167,7 +173,7 @@ class Resampler {
 	}";
 		this.resampler = Function("buffer", toCompile);
 	};
-	bypassResampler = function (buffer) {
+	bypassResampler(buffer) {
 		if (this.noReturn) {
 			//Set the buffer passed as our own, as we don't need to resample it:
 			this.outputBuffer = buffer;
@@ -178,7 +184,7 @@ class Resampler {
 			return buffer;
 		}
 	};
-	bufferSlice = function (sliceAmount) {
+	bufferSlice(sliceAmount) {
 		if (this.noReturn) {
 			//If we're going to access the properties directly from this object:
 			return sliceAmount;
@@ -201,7 +207,7 @@ class Resampler {
 			}
 		}
 	};
-	initializeBuffers = function () {
+	initializeBuffers() {
 		//Initialize the internal buffer:
 		try {
 			this.outputBuffer = new Float32Array(this.outputBufferSize);

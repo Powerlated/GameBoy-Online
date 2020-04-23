@@ -15,6 +15,15 @@ class Resize {
 	originalHeightMultipliedByChannels: number;
 	widthPassResultSize: number;
 	finalResultSize: number;
+	worker: Worker;
+	heightBuffer: any;
+	resizeWidth: (buffer: any) => any;
+	ratioWeightWidthPass: number;
+	resizeHeight: (buffer: any) => any;
+	ratioWeightHeightPass: number;
+	outputWidthWorkBench: any;
+	widthBuffer: any;
+	outputHeightWorkBench: any;
 	constructor(widthOriginal, heightOriginal, targetWidth, targetHeight, blendAlpha, interpolationPass, useWebWorker, resizeCallback) {
 		this.widthOriginal = Math.abs(parseInt(widthOriginal) || 0);
 		this.heightOriginal = Math.abs(parseInt(heightOriginal) || 0);
@@ -31,7 +40,7 @@ class Resize {
 		this.finalResultSize = this.targetWidthMultipliedByChannels * this.targetHeight;
 		this.initialize();
 	}
-	initialize = function () {
+	initialize() {
 		//Perform some checks:
 		if (this.widthOriginal > 0 && this.heightOriginal > 0 && this.targetWidth > 0 && this.targetHeight > 0) {
 			if (this.useWebWorker) {
@@ -48,7 +57,7 @@ class Resize {
 			throw (new Error("Invalid settings specified for the resizer."));
 		}
 	};
-	configureWorker = function () {
+	configureWorker() {
 		try {
 			var parentObj = this;
 			this.worker = new Worker(sourceOfWorker.substring(0, sourceOfWorker.length - 3) + "Worker.js");
@@ -62,7 +71,7 @@ class Resize {
 			this.useWebWorker = false;
 		}
 	};
-	configurePasses = function () {
+	configurePasses() {
 		if (this.widthOriginal == this.targetWidth) {
 			//Bypass the width resizer pass:
 			this.resizeWidth = this.bypassResizer;
@@ -96,7 +105,7 @@ class Resize {
 			}
 		}
 	};
-	resizeWidthRGB = function (buffer) {
+	resizeWidthRGB(buffer) {
 		var ratioWeight = this.ratioWeightWidthPass;
 		var ratioWeightDivisor = 1 / ratioWeight;
 		var weight = 0;
@@ -147,7 +156,7 @@ class Resize {
 		} while (outputOffset < this.targetWidthMultipliedByChannels);
 		return outputBuffer;
 	};
-	resizeWidthInterpolatedRGB = function (buffer) {
+	resizeWidthInterpolatedRGB(buffer) {
 		var ratioWeight = this.ratioWeightWidthPass;
 		var weight = 0;
 		var finalOffset = 0;
@@ -186,7 +195,7 @@ class Resize {
 		}
 		return outputBuffer;
 	};
-	resizeWidthRGBA = function (buffer) {
+	resizeWidthRGBA(buffer) {
 		var ratioWeight = this.ratioWeightWidthPass;
 		var ratioWeightDivisor = 1 / ratioWeight;
 		var weight = 0;
@@ -241,7 +250,7 @@ class Resize {
 		} while (outputOffset < this.targetWidthMultipliedByChannels);
 		return outputBuffer;
 	};
-	resizeWidthInterpolatedRGBA = function (buffer) {
+	resizeWidthInterpolatedRGBA(buffer) {
 		var ratioWeight = this.ratioWeightWidthPass;
 		var weight = 0;
 		var finalOffset = 0;
@@ -283,7 +292,7 @@ class Resize {
 		}
 		return outputBuffer;
 	};
-	resizeHeightRGB = function (buffer) {
+	resizeHeightRGB(buffer) {
 		var ratioWeight = this.ratioWeightHeightPass;
 		var ratioWeightDivisor = 1 / ratioWeight;
 		var weight = 0;
@@ -330,7 +339,7 @@ class Resize {
 		} while (outputOffset < this.finalResultSize);
 		return outputBuffer;
 	};
-	resizeHeightInterpolated = function (buffer) {
+	resizeHeightInterpolated(buffer) {
 		var ratioWeight = this.ratioWeightHeightPass;
 		var weight = 0;
 		var finalOffset = 0;
@@ -367,7 +376,7 @@ class Resize {
 		}
 		return outputBuffer;
 	};
-	resizeHeightRGBA = function (buffer) {
+	resizeHeightRGBA(buffer) {
 		var ratioWeight = this.ratioWeightHeightPass;
 		var ratioWeightDivisor = 1 / ratioWeight;
 		var weight = 0;
@@ -418,7 +427,7 @@ class Resize {
 		} while (outputOffset < this.finalResultSize);
 		return outputBuffer;
 	};
-	resize = function (buffer) {
+	resize(buffer) {
 		if (this.useWebWorker) {
 			this.worker.postMessage(["resize", buffer]);
 		}
@@ -426,25 +435,25 @@ class Resize {
 			this.resizeCallback(this.resizeHeight(this.resizeWidth(buffer)));
 		}
 	};
-	bypassResizer = function (buffer) {
+	bypassResizer(buffer) {
 		//Just return the buffer passsed:
 		return buffer;
 	};
-	initializeFirstPassBuffers = function (BILINEARAlgo) {
+	initializeFirstPassBuffers(BILINEARAlgo) {
 		//Initialize the internal width pass buffers:
 		this.widthBuffer = this.generateFloatBuffer(this.widthPassResultSize);
 		if (!BILINEARAlgo) {
 			this.outputWidthWorkBench = this.generateFloatBuffer(this.originalHeightMultipliedByChannels);
 		}
 	};
-	initializeSecondPassBuffers = function (BILINEARAlgo) {
+	initializeSecondPassBuffers(BILINEARAlgo) {
 		//Initialize the internal height pass buffers:
 		this.heightBuffer = this.generateUint8Buffer(this.finalResultSize);
 		if (!BILINEARAlgo) {
 			this.outputHeightWorkBench = this.generateFloatBuffer(this.targetWidthMultipliedByChannels);
 		}
 	};
-	generateFloatBuffer = function (bufferLength) {
+	generateFloatBuffer(bufferLength) {
 		//Generate a float32 typed array buffer:
 		try {
 			return new Float32Array(bufferLength);
@@ -453,7 +462,7 @@ class Resize {
 			return [];
 		}
 	};
-	generateUint8Buffer = function (bufferLength) {
+	generateUint8Buffer(bufferLength) {
 		//Generate a uint8 typed array buffer:
 		try {
 			return new Uint8Array(bufferLength);
