@@ -1,271 +1,274 @@
 "use strict";
- /*
-  JavaScript GameBoy Color Emulator
-  Copyright (C) 2010-2016 Grant Galitz
+/*
+ JavaScript GameBoy Color Emulator
+ Copyright (C) 2010-2016 Grant Galitz
 
-  Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+ Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
-  The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+ The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
-  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
-function GameBoyCore(canvas, ROMImage) {
-	//Params, etc...
-	this.canvas = canvas;						//Canvas DOM object for drawing out the graphics to.
-	this.drawContext = null;					// LCD Context
-	this.ROMImage = ROMImage;					//The game's ROM.
-	//CPU Registers and Flags:
-	this.registerA = 0x01; 						//Register A (Accumulator)
-	this.FZero = true; 							//Register F  - Result was zero
-	this.FSubtract = false;						//Register F  - Subtraction was executed
-	this.FHalfCarry = true;						//Register F  - Half carry or half borrow
-	this.FCarry = true;							//Register F  - Carry or borrow
-	this.registerB = 0x00;						//Register B
-	this.registerC = 0x13;						//Register C
-	this.registerD = 0x00;						//Register D
-	this.registerE = 0xD8;						//Register E
-	this.registersHL = 0x014D;					//Registers H and L combined
-	this.stackPointer = 0xFFFE;					//Stack Pointer
-	this.programCounter = 0x0100;				//Program Counter
-	//Some CPU Emulation State Variables:
-	this.CPUCyclesTotal = 0;					//Relative CPU clocking to speed set, rounded appropriately.
-	this.CPUCyclesTotalBase = 0;				//Relative CPU clocking to speed set base.
-	this.CPUCyclesTotalCurrent = 0;				//Relative CPU clocking to speed set, the directly used value.
-	this.CPUCyclesTotalRoundoff = 0;			//Clocking per iteration rounding catch.
-	this.baseCPUCyclesPerIteration	= 0;		//CPU clocks per iteration at 1x speed.
-	this.remainingClocks = 0;					//HALT clocking overrun carry over.
-	this.inBootstrap = true;					//Whether we're in the GBC boot ROM.
-	this.usedBootROM = false;					//Updated upon ROM loading...
-	this.usedGBCBootROM = false;				//Did we boot to the GBC boot ROM?
-	this.halt = false;							//Has the CPU been suspended until the next interrupt?
-	this.skipPCIncrement = false;				//Did we trip the DMG Halt bug?
-	this.stopEmulator = 3;						//Has the emulation been paused or a frame has ended?
-	this.IME = true;							//Are interrupts enabled?
-	this.IRQLineMatched = 0;					//CPU IRQ assertion.
-	this.interruptsRequested = 0;				//IF Register
-	this.interruptsEnabled = 0;					//IE Register
-	this.hdmaRunning = false;					//HDMA Transfer Flag - GBC only
-	this.CPUTicks = 0;							//The number of clock cycles emulated.
-	this.doubleSpeedShifter = 0;				//GBC double speed clocking shifter.
-	this.JoyPad = 0xFF;							//Joypad State (two four-bit states actually)
-	this.CPUStopped = false;					//CPU STOP status.
-	//Main RAM, MBC RAM, GBC Main RAM, VRAM, etc.
-	this.memoryReader = [];						//Array of functions mapped to read back memory
-	this.memoryWriter = [];						//Array of functions mapped to write to memory
-	this.memoryHighReader = [];					//Array of functions mapped to read back 0xFFXX memory
-	this.memoryHighWriter = [];					//Array of functions mapped to write to 0xFFXX memory
-	this.ROM = [];								//The full ROM file dumped to an array.
-	this.memory = [];							//Main Core Memory
-	this.MBCRam = [];							//Switchable RAM (Used by games for more RAM) for the main memory range 0xA000 - 0xC000.
-	this.VRAM = [];								//Extra VRAM bank for GBC.
-	this.GBCMemory = [];						//GBC main RAM Banks
-	this.MBC1Mode = false;						//MBC1 Type (4/32, 16/8)
-	this.MBCRAMBanksEnabled = false;			//MBC RAM Access Control.
-	this.currMBCRAMBank = 0;					//MBC Currently Indexed RAM Bank
-	this.currMBCRAMBankPosition = -0xA000;		//MBC Position Adder;
-	this.cGBC = false;							//GameBoy Color detection.
-	this.gbcRamBank = 1;						//Currently Switched GameBoy Color ram bank
-	this.gbcRamBankPosition = -0xD000;			//GBC RAM offset from address start.
-	this.gbcRamBankPositionECHO = -0xF000;		//GBC RAM (ECHO mirroring) offset from address start.
-	this.RAMBanks = [0, 1, 2, 4, 16];			//Used to map the RAM banks to maximum size the MBC used can do.
-	this.ROMBank1offs = 0;						//Offset of the ROM bank switching.
-	this.currentROMBank = 0;					//The parsed current ROM bank selection.
-	this.cartridgeType = 0;						//Cartridge Type
-	this.name = "";								//Name of the game
-	this.gameCode = "";							//Game code (Suffix for older games)
-	this.fromSaveState = false;					//A boolean to see if this was loaded in as a save state.
-	this.savedStateFileName = "";				//When loaded in as a save state, this will not be empty.
-	this.STATTracker = 0;						//Tracker for STAT triggering.
-	this.modeSTAT = 0;							//The scan line mode (for lines 1-144 it's 2-3-0, for 145-154 it's 1)
-	this.spriteCount = 252;						//Mode 3 extra clocking counter (Depends on how many sprites are on the current line.).
-	this.LYCMatchTriggerSTAT = false;			//Should we trigger an interrupt if LY==LYC?
-	this.mode2TriggerSTAT = false;				//Should we trigger an interrupt if in mode 2?
-	this.mode1TriggerSTAT = false;				//Should we trigger an interrupt if in mode 1?
-	this.mode0TriggerSTAT = false;				//Should we trigger an interrupt if in mode 0?
-	this.LCDisOn = false;						//Is the emulated LCD controller on?
-	this.LINECONTROL = [];						//Array of functions to handle each scan line we do (onscreen + offscreen)
-	this.DISPLAYOFFCONTROL = [function (parentObj) {
-		//Array of line 0 function to handle the LCD controller when it's off (Do nothing!).
-	}];
-	this.LCDCONTROL = null;						//Pointer to either LINECONTROL or DISPLAYOFFCONTROL.
-	this.initializeLCDController();				//Compile the LCD controller functions.
-	//RTC (Real Time Clock for MBC3):
-	this.RTCisLatched = false;
-	this.latchedSeconds = 0;					//RTC latched seconds.
-	this.latchedMinutes = 0;					//RTC latched minutes.
-	this.latchedHours = 0;						//RTC latched hours.
-	this.latchedLDays = 0;						//RTC latched lower 8-bits of the day counter.
-	this.latchedHDays = 0;						//RTC latched high-bit of the day counter.
-	this.RTCSeconds = 0;						//RTC seconds counter.
-	this.RTCMinutes = 0;						//RTC minutes counter.
-	this.RTCHours = 0;							//RTC hours counter.
-	this.RTCDays = 0;							//RTC days counter.
-	this.RTCDayOverFlow = false;				//Did the RTC overflow and wrap the day counter?
-	this.RTCHALT = false;						//Is the RTC allowed to clock up?
-	//Gyro:
-	this.highX = 127;
-	this.lowX = 127;
-	this.highY = 127;
-	this.lowY = 127;
-	//Sound variables:
-	this.audioHandle = null;						//XAudioJS handle
-	this.numSamplesTotal = 0;						//Length of the sound buffers.
-	this.dutyLookup = [								//Map the duty values given to ones we can work with.
-		[false, false, false, false, false, false, false, true],
-		[true, false, false, false, false, false, false, true],
-		[true, false, false, false, false, true, true, true],
-		[false, true, true, true, true, true, true, false]
-	];
-	this.bufferContainAmount = 0;					//Buffer maintenance metric.
-	this.LSFR15Table = null;
-	this.LSFR7Table = null;
-	this.noiseSampleTable = null;
-	this.initializeAudioStartState();
-	this.soundMasterEnabled = false;			//As its name implies
-	this.channel3PCM = null;					//Channel 3 adjusted sample buffer.
-	//Vin Shit:
-	this.VinLeftChannelMasterVolume = 8;		//Computed post-mixing volume.
-	this.VinRightChannelMasterVolume = 8;		//Computed post-mixing volume.
-	//Channel paths enabled:
-	this.leftChannel1 = false;
-	this.leftChannel2 = false;
-	this.leftChannel3 = false;
-	this.leftChannel4 = false;
-	this.rightChannel1 = false;
-	this.rightChannel2 = false;
-	this.rightChannel3 = false;
-	this.rightChannel4 = false;
-	this.audioClocksUntilNextEvent = 1;
-	this.audioClocksUntilNextEventCounter = 1;
-	//Channel output level caches:
-	this.channel1currentSampleLeft = 0;
-	this.channel1currentSampleRight = 0;
-	this.channel2currentSampleLeft = 0;
-	this.channel2currentSampleRight = 0;
-	this.channel3currentSampleLeft = 0;
-	this.channel3currentSampleRight = 0;
-	this.channel4currentSampleLeft = 0;
-	this.channel4currentSampleRight = 0;
-	this.channel1currentSampleLeftSecondary = 0;
-	this.channel1currentSampleRightSecondary = 0;
-	this.channel2currentSampleLeftSecondary = 0;
-	this.channel2currentSampleRightSecondary = 0;
-	this.channel3currentSampleLeftSecondary = 0;
-	this.channel3currentSampleRightSecondary = 0;
-	this.channel4currentSampleLeftSecondary = 0;
-	this.channel4currentSampleRightSecondary = 0;
-	this.channel1currentSampleLeftTrimary = 0;
-	this.channel1currentSampleRightTrimary = 0;
-	this.channel2currentSampleLeftTrimary = 0;
-	this.channel2currentSampleRightTrimary = 0;
-	this.mixerOutputCache = 0;
-	//Pre-multipliers to cache some calculations:
-	this.emulatorSpeed = 1;
-	this.initializeTiming();
-	//Audio generation counters:
-	this.audioTicks = 0;				//Used to sample the audio system every x CPU instructions.
-	this.audioIndex = 0;				//Used to keep alignment on audio generation.
-	this.downsampleInput = 0;
-	this.audioDestinationPosition = 0;	//Used to keep alignment on audio generation.
-	this.rollover = 0;					//Used to keep alignment on the number of samples to output (Realign from counter alias).
-	//Timing Variables
-	this.emulatorTicks = 0;				//Times for how many instructions to execute before ending the loop.
-	this.DIVTicks = 56;					//DIV Ticks Counter (Invisible lower 8-bit)
-	this.LCDTicks = 60;					//Counter for how many instructions have been executed on a scanline so far.
-	this.timerTicks = 0;				//Counter for the TIMA timer.
-	this.TIMAEnabled = false;			//Is TIMA enabled?
-	this.TACClocker = 1024;				//Timer Max Ticks
-	this.serialTimer = 0;				//Serial IRQ Timer
-	this.serialShiftTimer = 0;			//Serial Transfer Shift Timer
-	this.serialShiftTimerAllocated = 0;	//Serial Transfer Shift Timer Refill
-	this.IRQEnableDelay = 0;			//Are the interrupts on queue to be enabled?
-	var dateVar = new Date();
-	this.lastIteration = dateVar.getTime();//The last time we iterated the main loop.
-	dateVar = new Date();
-	this.firstIteration = dateVar.getTime();
-	this.iterations = 0;
-	this.actualScanLine = 0;			//Actual scan line...
-	this.lastUnrenderedLine = 0;		//Last rendered scan line...
-	this.queuedScanLines = 0;
-	this.totalLinesPassed = 0;
-	this.haltPostClocks = 0;			//Post-Halt clocking.
-	//ROM Cartridge Components:
-	this.cMBC1 = false;					//Does the cartridge use MBC1?
-	this.cMBC2 = false;					//Does the cartridge use MBC2?
-	this.cMBC3 = false;					//Does the cartridge use MBC3?
-	this.cMBC5 = false;					//Does the cartridge use MBC5?
-	this.cMBC7 = false;					//Does the cartridge use MBC7?
-	this.cSRAM = false;					//Does the cartridge use save RAM?
-	this.cMMMO1 = false;				//...
-	this.cRUMBLE = false;				//Does the cartridge use the RUMBLE addressing (modified MBC5)?
-	this.cCamera = false;				//Is the cartridge actually a GameBoy Camera?
-	this.cTAMA5 = false;				//Does the cartridge use TAMA5? (Tamagotchi Cartridge)
-	this.cHuC3 = false;					//Does the cartridge use HuC3 (Hudson Soft / modified MBC3)?
-	this.cHuC1 = false;					//Does the cartridge use HuC1 (Hudson Soft / modified MBC1)?
-	this.cTIMER = false;				//Does the cartridge have an RTC?
-	this.ROMBanks = [					// 1 Bank = 16 KBytes = 256 Kbits
-		2, 4, 8, 16, 32, 64, 128, 256, 512
-	];
-	this.ROMBanks[0x52] = 72;
-	this.ROMBanks[0x53] = 80;
-	this.ROMBanks[0x54] = 96;
-	this.numRAMBanks = 0;					//How many RAM banks were actually allocated?
-	////Graphics Variables
-	this.currVRAMBank = 0;					//Current VRAM bank for GBC.
-	this.backgroundX = 0;					//Register SCX (X-Scroll)
-	this.backgroundY = 0;					//Register SCY (Y-Scroll)
-	this.gfxWindowDisplay = false;			//Is the windows enabled?
-	this.gfxSpriteShow = false;				//Are sprites enabled?
-	this.gfxSpriteNormalHeight = true;		//Are we doing 8x8 or 8x16 sprites?
-	this.bgEnabled = true;					//Is the BG enabled?
-	this.BGPriorityEnabled = true;			//Can we flag the BG for priority over sprites?
-	this.gfxWindowCHRBankPosition = 0;		//The current bank of the character map the window uses.
-	this.gfxBackgroundCHRBankPosition = 0;	//The current bank of the character map the BG uses.
-	this.gfxBackgroundBankOffset = 0x80;	//Fast mapping of the tile numbering/
-	this.windowY = 0;						//Current Y offset of the window.
-	this.windowX = 0;						//Current X offset of the window.
-	this.drewBlank = 0;						//To prevent the repeating of drawing a blank screen.
-	this.drewFrame = false;					//Throttle how many draws we can do to once per iteration.
-	this.midScanlineOffset = -1;			//mid-scanline rendering offset.
-	this.pixelEnd = 0;						//track the x-coord limit for line rendering (mid-scanline usage).
-	this.currentX = 0;						//The x-coord we left off at for mid-scanline rendering.
-	//BG Tile Pointer Caches:
-	this.BGCHRBank1 = null;
-	this.BGCHRBank2 = null;
-	this.BGCHRCurrentBank = null;
-	//Tile Data Cache:
-	this.tileCache = null;
-	//Palettes:
-	this.colors = [0xEFFFDE, 0xADD794, 0x529273, 0x183442];			//"Classic" GameBoy palette colors.
-	this.OBJPalette = null;
-	this.BGPalette = null;
-	this.gbcOBJRawPalette = null;
-	this.gbcBGRawPalette = null;
-	this.gbOBJPalette = null;
-	this.gbBGPalette = null;
-	this.gbcOBJPalette = null;
-	this.gbcBGPalette = null;
-	this.gbBGColorizedPalette = null;
-	this.gbOBJColorizedPalette = null;
-	this.cachedBGPaletteConversion = null;
-	this.cachedOBJPaletteConversion = null;
-	this.updateGBBGPalette = this.updateGBRegularBGPalette;
-	this.updateGBOBJPalette = this.updateGBRegularOBJPalette;
-	this.colorizedGBPalettes = false;
-	this.BGLayerRender = null;			//Reference to the BG rendering function.
-	this.WindowLayerRender = null;		//Reference to the window rendering function.
-	this.SpriteLayerRender = null;		//Reference to the OAM rendering function.
-	this.frameBuffer = [];				//The internal frame-buffer.
-	this.swizzledFrame = null;			//The secondary gfx buffer that holds the converted RGBA values.
-	this.canvasBuffer = null;			//imageData handle
-	this.pixelStart = 0;				//Temp variable for holding the current working framebuffer offset.
-	//Variables used for scaling in JS:
-	this.onscreenWidth = this.offscreenWidth = 160;
-	this.onscreenHeight = this.offscreenHeight = 144;
-	this.offscreenRGBCount = this.onscreenWidth * this.onscreenHeight * 4;
-	this.resizePathClear = true;
-	//Initialize the white noise cache tables ahead of time:
-	this.intializeWhiteNoise();
+class GameBoyCore {
+	constructor(canvas, ROMImage) {
+		//Params, etc...
+		this.canvas = canvas;						//Canvas DOM object for drawing out the graphics to.
+		this.drawContext = null;					// LCD Context
+		this.ROMImage = ROMImage;					//The game's ROM.
+		//CPU Registers and Flags:
+		this.registerA = 0x01; 						//Register A (Accumulator)
+		this.FZero = true; 							//Register F  - Result was zero
+		this.FSubtract = false;						//Register F  - Subtraction was executed
+		this.FHalfCarry = true;						//Register F  - Half carry or half borrow
+		this.FCarry = true;							//Register F  - Carry or borrow
+		this.registerB = 0x00;						//Register B
+		this.registerC = 0x13;						//Register C
+		this.registerD = 0x00;						//Register D
+		this.registerE = 0xD8;						//Register E
+		this.registersHL = 0x014D;					//Registers H and L combined
+		this.stackPointer = 0xFFFE;					//Stack Pointer
+		this.programCounter = 0x0100;				//Program Counter
+		//Some CPU Emulation State Variables:
+		this.CPUCyclesTotal = 0;					//Relative CPU clocking to speed set, rounded appropriately.
+		this.CPUCyclesTotalBase = 0;				//Relative CPU clocking to speed set base.
+		this.CPUCyclesTotalCurrent = 0;				//Relative CPU clocking to speed set, the directly used value.
+		this.CPUCyclesTotalRoundoff = 0;			//Clocking per iteration rounding catch.
+		this.baseCPUCyclesPerIteration = 0;		//CPU clocks per iteration at 1x speed.
+		this.remainingClocks = 0;					//HALT clocking overrun carry over.
+		this.inBootstrap = true;					//Whether we're in the GBC boot ROM.
+		this.usedBootROM = false;					//Updated upon ROM loading...
+		this.usedGBCBootROM = false;				//Did we boot to the GBC boot ROM?
+		this.halt = false;							//Has the CPU been suspended until the next interrupt?
+		this.skipPCIncrement = false;				//Did we trip the DMG Halt bug?
+		this.stopEmulator = 3;						//Has the emulation been paused or a frame has ended?
+		this.IME = true;							//Are interrupts enabled?
+		this.IRQLineMatched = 0;					//CPU IRQ assertion.
+		this.interruptsRequested = 0;				//IF Register
+		this.interruptsEnabled = 0;					//IE Register
+		this.hdmaRunning = false;					//HDMA Transfer Flag - GBC only
+		this.CPUTicks = 0;							//The number of clock cycles emulated.
+		this.doubleSpeedShifter = 0;				//GBC double speed clocking shifter.
+		this.JoyPad = 0xFF;							//Joypad State (two four-bit states actually)
+		this.CPUStopped = false;					//CPU STOP status.
+		//Main RAM, MBC RAM, GBC Main RAM, VRAM, etc.
+		this.memoryReader = [];						//Array of functions mapped to read back memory
+		this.memoryWriter = [];						//Array of functions mapped to write to memory
+		this.memoryHighReader = [];					//Array of functions mapped to read back 0xFFXX memory
+		this.memoryHighWriter = [];					//Array of functions mapped to write to 0xFFXX memory
+		this.ROM = [];								//The full ROM file dumped to an array.
+		this.memory = [];							//Main Core Memory
+		this.MBCRam = [];							//Switchable RAM (Used by games for more RAM) for the main memory range 0xA000 - 0xC000.
+		this.VRAM = [];								//Extra VRAM bank for GBC.
+		this.GBCMemory = [];						//GBC main RAM Banks
+		this.MBC1Mode = false;						//MBC1 Type (4/32, 16/8)
+		this.MBCRAMBanksEnabled = false;			//MBC RAM Access Control.
+		this.currMBCRAMBank = 0;					//MBC Currently Indexed RAM Bank
+		this.currMBCRAMBankPosition = -0xA000;		//MBC Position Adder;
+		this.cGBC = false;							//GameBoy Color detection.
+		this.gbcRamBank = 1;						//Currently Switched GameBoy Color ram bank
+		this.gbcRamBankPosition = -0xD000;			//GBC RAM offset from address start.
+		this.gbcRamBankPositionECHO = -0xF000;		//GBC RAM (ECHO mirroring) offset from address start.
+		this.RAMBanks = [0, 1, 2, 4, 16];			//Used to map the RAM banks to maximum size the MBC used can do.
+		this.ROMBank1offs = 0;						//Offset of the ROM bank switching.
+		this.currentROMBank = 0;					//The parsed current ROM bank selection.
+		this.cartridgeType = 0;						//Cartridge Type
+		this.name = "";								//Name of the game
+		this.gameCode = "";							//Game code (Suffix for older games)
+		this.fromSaveState = false;					//A boolean to see if this was loaded in as a save state.
+		this.savedStateFileName = "";				//When loaded in as a save state, this will not be empty.
+		this.STATTracker = 0;						//Tracker for STAT triggering.
+		this.modeSTAT = 0;							//The scan line mode (for lines 1-144 it's 2-3-0, for 145-154 it's 1)
+		this.spriteCount = 252;						//Mode 3 extra clocking counter (Depends on how many sprites are on the current line.).
+		this.LYCMatchTriggerSTAT = false;			//Should we trigger an interrupt if LY==LYC?
+		this.mode2TriggerSTAT = false;				//Should we trigger an interrupt if in mode 2?
+		this.mode1TriggerSTAT = false;				//Should we trigger an interrupt if in mode 1?
+		this.mode0TriggerSTAT = false;				//Should we trigger an interrupt if in mode 0?
+		this.LCDisOn = false;						//Is the emulated LCD controller on?
+		this.LINECONTROL = [];						//Array of functions to handle each scan line we do (onscreen + offscreen)
+		this.DISPLAYOFFCONTROL = [function (parentObj) {
+			//Array of line 0 function to handle the LCD controller when it's off (Do nothing!).
+		}];
+		this.LCDCONTROL = null;						//Pointer to either LINECONTROL or DISPLAYOFFCONTROL.
+		this.initializeLCDController();				//Compile the LCD controller functions.
+		//RTC (Real Time Clock for MBC3):
+		this.RTCisLatched = false;
+		this.latchedSeconds = 0;					//RTC latched seconds.
+		this.latchedMinutes = 0;					//RTC latched minutes.
+		this.latchedHours = 0;						//RTC latched hours.
+		this.latchedLDays = 0;						//RTC latched lower 8-bits of the day counter.
+		this.latchedHDays = 0;						//RTC latched high-bit of the day counter.
+		this.RTCSeconds = 0;						//RTC seconds counter.
+		this.RTCMinutes = 0;						//RTC minutes counter.
+		this.RTCHours = 0;							//RTC hours counter.
+		this.RTCDays = 0;							//RTC days counter.
+		this.RTCDayOverFlow = false;				//Did the RTC overflow and wrap the day counter?
+		this.RTCHALT = false;						//Is the RTC allowed to clock up?
+		//Gyro:
+		this.highX = 127;
+		this.lowX = 127;
+		this.highY = 127;
+		this.lowY = 127;
+		//Sound variables:
+		this.audioHandle = null;						//XAudioJS handle
+		this.numSamplesTotal = 0;						//Length of the sound buffers.
+		this.dutyLookup = [								//Map the duty values given to ones we can work with.
+			[false, false, false, false, false, false, false, true],
+			[true, false, false, false, false, false, false, true],
+			[true, false, false, false, false, true, true, true],
+			[false, true, true, true, true, true, true, false]
+		];
+		this.bufferContainAmount = 0;					//Buffer maintenance metric.
+		this.LSFR15Table = null;
+		this.LSFR7Table = null;
+		this.noiseSampleTable = null;
+		this.initializeAudioStartState();
+		this.soundMasterEnabled = false;			//As its name implies
+		this.channel3PCM = null;					//Channel 3 adjusted sample buffer.
+		//Vin Shit:
+		this.VinLeftChannelMasterVolume = 8;		//Computed post-mixing volume.
+		this.VinRightChannelMasterVolume = 8;		//Computed post-mixing volume.
+		//Channel paths enabled:
+		this.leftChannel1 = false;
+		this.leftChannel2 = false;
+		this.leftChannel3 = false;
+		this.leftChannel4 = false;
+		this.rightChannel1 = false;
+		this.rightChannel2 = false;
+		this.rightChannel3 = false;
+		this.rightChannel4 = false;
+		this.audioClocksUntilNextEvent = 1;
+		this.audioClocksUntilNextEventCounter = 1;
+		//Channel output level caches:
+		this.channel1currentSampleLeft = 0;
+		this.channel1currentSampleRight = 0;
+		this.channel2currentSampleLeft = 0;
+		this.channel2currentSampleRight = 0;
+		this.channel3currentSampleLeft = 0;
+		this.channel3currentSampleRight = 0;
+		this.channel4currentSampleLeft = 0;
+		this.channel4currentSampleRight = 0;
+		this.channel1currentSampleLeftSecondary = 0;
+		this.channel1currentSampleRightSecondary = 0;
+		this.channel2currentSampleLeftSecondary = 0;
+		this.channel2currentSampleRightSecondary = 0;
+		this.channel3currentSampleLeftSecondary = 0;
+		this.channel3currentSampleRightSecondary = 0;
+		this.channel4currentSampleLeftSecondary = 0;
+		this.channel4currentSampleRightSecondary = 0;
+		this.channel1currentSampleLeftTrimary = 0;
+		this.channel1currentSampleRightTrimary = 0;
+		this.channel2currentSampleLeftTrimary = 0;
+		this.channel2currentSampleRightTrimary = 0;
+		this.mixerOutputCache = 0;
+		//Pre-multipliers to cache some calculations:
+		this.emulatorSpeed = 1;
+		this.initializeTiming();
+		//Audio generation counters:
+		this.audioTicks = 0;				//Used to sample the audio system every x CPU instructions.
+		this.audioIndex = 0;				//Used to keep alignment on audio generation.
+		this.downsampleInput = 0;
+		this.audioDestinationPosition = 0;	//Used to keep alignment on audio generation.
+		this.rollover = 0;					//Used to keep alignment on the number of samples to output (Realign from counter alias).
+		//Timing Variables
+		this.emulatorTicks = 0;				//Times for how many instructions to execute before ending the loop.
+		this.DIVTicks = 56;					//DIV Ticks Counter (Invisible lower 8-bit)
+		this.LCDTicks = 60;					//Counter for how many instructions have been executed on a scanline so far.
+		this.timerTicks = 0;				//Counter for the TIMA timer.
+		this.TIMAEnabled = false;			//Is TIMA enabled?
+		this.TACClocker = 1024;				//Timer Max Ticks
+		this.serialTimer = 0;				//Serial IRQ Timer
+		this.serialShiftTimer = 0;			//Serial Transfer Shift Timer
+		this.serialShiftTimerAllocated = 0;	//Serial Transfer Shift Timer Refill
+		this.IRQEnableDelay = 0;			//Are the interrupts on queue to be enabled?
+		var dateVar = new Date();
+		this.lastIteration = dateVar.getTime();//The last time we iterated the main loop.
+		dateVar = new Date();
+		this.firstIteration = dateVar.getTime();
+		this.iterations = 0;
+		this.actualScanLine = 0;			//Actual scan line...
+		this.lastUnrenderedLine = 0;		//Last rendered scan line...
+		this.queuedScanLines = 0;
+		this.totalLinesPassed = 0;
+		this.haltPostClocks = 0;			//Post-Halt clocking.
+		//ROM Cartridge Components:
+		this.cMBC1 = false;					//Does the cartridge use MBC1?
+		this.cMBC2 = false;					//Does the cartridge use MBC2?
+		this.cMBC3 = false;					//Does the cartridge use MBC3?
+		this.cMBC5 = false;					//Does the cartridge use MBC5?
+		this.cMBC7 = false;					//Does the cartridge use MBC7?
+		this.cSRAM = false;					//Does the cartridge use save RAM?
+		this.cMMMO1 = false;				//...
+		this.cRUMBLE = false;				//Does the cartridge use the RUMBLE addressing (modified MBC5)?
+		this.cCamera = false;				//Is the cartridge actually a GameBoy Camera?
+		this.cTAMA5 = false;				//Does the cartridge use TAMA5? (Tamagotchi Cartridge)
+		this.cHuC3 = false;					//Does the cartridge use HuC3 (Hudson Soft / modified MBC3)?
+		this.cHuC1 = false;					//Does the cartridge use HuC1 (Hudson Soft / modified MBC1)?
+		this.cTIMER = false;				//Does the cartridge have an RTC?
+		this.ROMBanks = [					// 1 Bank = 16 KBytes = 256 Kbits
+			2, 4, 8, 16, 32, 64, 128, 256, 512
+		];
+		this.ROMBanks[0x52] = 72;
+		this.ROMBanks[0x53] = 80;
+		this.ROMBanks[0x54] = 96;
+		this.numRAMBanks = 0;					//How many RAM banks were actually allocated?
+		////Graphics Variables
+		this.currVRAMBank = 0;					//Current VRAM bank for GBC.
+		this.backgroundX = 0;					//Register SCX (X-Scroll)
+		this.backgroundY = 0;					//Register SCY (Y-Scroll)
+		this.gfxWindowDisplay = false;			//Is the windows enabled?
+		this.gfxSpriteShow = false;				//Are sprites enabled?
+		this.gfxSpriteNormalHeight = true;		//Are we doing 8x8 or 8x16 sprites?
+		this.bgEnabled = true;					//Is the BG enabled?
+		this.BGPriorityEnabled = true;			//Can we flag the BG for priority over sprites?
+		this.gfxWindowCHRBankPosition = 0;		//The current bank of the character map the window uses.
+		this.gfxBackgroundCHRBankPosition = 0;	//The current bank of the character map the BG uses.
+		this.gfxBackgroundBankOffset = 0x80;	//Fast mapping of the tile numbering/
+		this.windowY = 0;						//Current Y offset of the window.
+		this.windowX = 0;						//Current X offset of the window.
+		this.drewBlank = 0;						//To prevent the repeating of drawing a blank screen.
+		this.drewFrame = false;					//Throttle how many draws we can do to once per iteration.
+		this.midScanlineOffset = -1;			//mid-scanline rendering offset.
+		this.pixelEnd = 0;						//track the x-coord limit for line rendering (mid-scanline usage).
+		this.currentX = 0;						//The x-coord we left off at for mid-scanline rendering.
+		//BG Tile Pointer Caches:
+		this.BGCHRBank1 = null;
+		this.BGCHRBank2 = null;
+		this.BGCHRCurrentBank = null;
+		//Tile Data Cache:
+		this.tileCache = null;
+		//Palettes:
+		this.colors = [0xEFFFDE, 0xADD794, 0x529273, 0x183442];			//"Classic" GameBoy palette colors.
+		this.OBJPalette = null;
+		this.BGPalette = null;
+		this.gbcOBJRawPalette = null;
+		this.gbcBGRawPalette = null;
+		this.gbOBJPalette = null;
+		this.gbBGPalette = null;
+		this.gbcOBJPalette = null;
+		this.gbcBGPalette = null;
+		this.gbBGColorizedPalette = null;
+		this.gbOBJColorizedPalette = null;
+		this.cachedBGPaletteConversion = null;
+		this.cachedOBJPaletteConversion = null;
+		this.updateGBBGPalette = this.updateGBRegularBGPalette;
+		this.updateGBOBJPalette = this.updateGBRegularOBJPalette;
+		this.colorizedGBPalettes = false;
+		this.BGLayerRender = null;			//Reference to the BG rendering function.
+		this.WindowLayerRender = null;		//Reference to the window rendering function.
+		this.SpriteLayerRender = null;		//Reference to the OAM rendering function.
+		this.frameBuffer = [];				//The internal frame-buffer.
+		this.swizzledFrame = null;			//The secondary gfx buffer that holds the converted RGBA values.
+		this.canvasBuffer = null;			//imageData handle
+		this.pixelStart = 0;				//Temp variable for holding the current working framebuffer offset.
+		//Variables used for scaling in JS:
+		this.onscreenWidth = this.offscreenWidth = 160;
+		this.onscreenHeight = this.offscreenHeight = 144;
+		this.offscreenRGBCount = this.onscreenWidth * this.onscreenHeight * 4;
+		this.resizePathClear = true;
+		//Initialize the white noise cache tables ahead of time:
+		this.intializeWhiteNoise();
+	}
+
 }
 GameBoyCore.prototype.GBBOOTROM = [		//GB BOOT ROM
 	//Add 256 byte boot rom here if you are going to use it.
@@ -274,22 +277,22 @@ GameBoyCore.prototype.GBCBOOTROM = [	//GBC BOOT ROM
 	//Add 2048 byte boot rom here if you are going to use it.
 ];
 GameBoyCore.prototype.ffxxDump = [	//Dump of the post-BOOT I/O register state (From gambatte):
-	0x0F, 0x00, 0x7C, 0xFF, 0x00, 0x00, 0x00, 0xF8, 	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01,
-	0x80, 0xBF, 0xF3, 0xFF, 0xBF, 0xFF, 0x3F, 0x00, 	0xFF, 0xBF, 0x7F, 0xFF, 0x9F, 0xFF, 0xBF, 0xFF,
-	0xFF, 0x00, 0x00, 0xBF, 0x77, 0xF3, 0xF1, 0xFF, 	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-	0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 	0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF,
-	0x91, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFC, 	0x00, 0x00, 0x00, 0x00, 0xFF, 0x7E, 0xFF, 0xFE,
-	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x3E, 0xFF, 	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 	0xC0, 0xFF, 0xC1, 0x00, 0xFE, 0xFF, 0xFF, 0xFF,
-	0xF8, 0xFF, 0x00, 0x00, 0x00, 0x8F, 0x00, 0x00, 	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-	0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 	0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
-	0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 	0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
-	0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 	0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
-	0x45, 0xEC, 0x52, 0xFA, 0x08, 0xB7, 0x07, 0x5D, 	0x01, 0xFD, 0xC0, 0xFF, 0x08, 0xFC, 0x00, 0xE5,
-	0x0B, 0xF8, 0xC2, 0xCE, 0xF4, 0xF9, 0x0F, 0x7F, 	0x45, 0x6D, 0x3D, 0xFE, 0x46, 0x97, 0x33, 0x5E,
-	0x08, 0xEF, 0xF1, 0xFF, 0x86, 0x83, 0x24, 0x74, 	0x12, 0xFC, 0x00, 0x9F, 0xB4, 0xB7, 0x06, 0xD5,
-	0xD0, 0x7A, 0x00, 0x9E, 0x04, 0x5F, 0x41, 0x2F, 	0x1D, 0x77, 0x36, 0x75, 0x81, 0xAA, 0x70, 0x3A,
-	0x98, 0xD1, 0x71, 0x02, 0x4D, 0x01, 0xC1, 0xFF, 	0x0D, 0x00, 0xD3, 0x05, 0xF9, 0x00, 0x0B, 0x00
+	0x0F, 0x00, 0x7C, 0xFF, 0x00, 0x00, 0x00, 0xF8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01,
+	0x80, 0xBF, 0xF3, 0xFF, 0xBF, 0xFF, 0x3F, 0x00, 0xFF, 0xBF, 0x7F, 0xFF, 0x9F, 0xFF, 0xBF, 0xFF,
+	0xFF, 0x00, 0x00, 0xBF, 0x77, 0xF3, 0xF1, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF, 0x00, 0xFF,
+	0x91, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFC, 0x00, 0x00, 0x00, 0x00, 0xFF, 0x7E, 0xFF, 0xFE,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x3E, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0xFF, 0xC1, 0x00, 0xFE, 0xFF, 0xFF, 0xFF,
+	0xF8, 0xFF, 0x00, 0x00, 0x00, 0x8F, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xCE, 0xED, 0x66, 0x66, 0xCC, 0x0D, 0x00, 0x0B, 0x03, 0x73, 0x00, 0x83, 0x00, 0x0C, 0x00, 0x0D,
+	0x00, 0x08, 0x11, 0x1F, 0x88, 0x89, 0x00, 0x0E, 0xDC, 0xCC, 0x6E, 0xE6, 0xDD, 0xDD, 0xD9, 0x99,
+	0xBB, 0xBB, 0x67, 0x63, 0x6E, 0x0E, 0xEC, 0xCC, 0xDD, 0xDC, 0x99, 0x9F, 0xBB, 0xB9, 0x33, 0x3E,
+	0x45, 0xEC, 0x52, 0xFA, 0x08, 0xB7, 0x07, 0x5D, 0x01, 0xFD, 0xC0, 0xFF, 0x08, 0xFC, 0x00, 0xE5,
+	0x0B, 0xF8, 0xC2, 0xCE, 0xF4, 0xF9, 0x0F, 0x7F, 0x45, 0x6D, 0x3D, 0xFE, 0x46, 0x97, 0x33, 0x5E,
+	0x08, 0xEF, 0xF1, 0xFF, 0x86, 0x83, 0x24, 0x74, 0x12, 0xFC, 0x00, 0x9F, 0xB4, 0xB7, 0x06, 0xD5,
+	0xD0, 0x7A, 0x00, 0x9E, 0x04, 0x5F, 0x41, 0x2F, 0x1D, 0x77, 0x36, 0x75, 0x81, 0xAA, 0x70, 0x3A,
+	0x98, 0xD1, 0x71, 0x02, 0x4D, 0x01, 0xC1, 0xFF, 0x0D, 0x00, 0xD3, 0x05, 0xF9, 0x00, 0x0B, 0x00
 ];
 GameBoyCore.prototype.OPCODE = [
 	//NOP
@@ -1785,7 +1788,7 @@ GameBoyCore.prototype.OPCODE = [
 	//RET
 	//#0xC9:
 	function (parentObj) {
-		parentObj.programCounter =  (parentObj.memoryRead((parentObj.stackPointer + 1) & 0xFFFF) << 8) | parentObj.memoryReader[parentObj.stackPointer](parentObj, parentObj.stackPointer);
+		parentObj.programCounter = (parentObj.memoryRead((parentObj.stackPointer + 1) & 0xFFFF) << 8) | parentObj.memoryReader[parentObj.stackPointer](parentObj, parentObj.stackPointer);
 		parentObj.stackPointer = (parentObj.stackPointer + 2) & 0xFFFF;
 	},
 	//JP FZ, nn
@@ -2258,7 +2261,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RLC C
 	//#0x01:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = (parentObj.registerC > 0x7F);
 		parentObj.registerC = ((parentObj.registerC << 1) & 0xFF) | ((parentObj.FCarry) ? 1 : 0);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2266,7 +2269,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RLC D
 	//#0x02:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = (parentObj.registerD > 0x7F);
 		parentObj.registerD = ((parentObj.registerD << 1) & 0xFF) | ((parentObj.FCarry) ? 1 : 0);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2274,7 +2277,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RLC E
 	//#0x03:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = (parentObj.registerE > 0x7F);
 		parentObj.registerE = ((parentObj.registerE << 1) & 0xFF) | ((parentObj.FCarry) ? 1 : 0);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2282,7 +2285,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RLC H
 	//#0x04:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = (parentObj.registersHL > 0x7FFF);
 		parentObj.registersHL = ((parentObj.registersHL << 1) & 0xFE00) | ((parentObj.FCarry) ? 0x100 : 0) | (parentObj.registersHL & 0xFF);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2290,7 +2293,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RLC L
 	//#0x05:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registersHL & 0x80) == 0x80);
 		parentObj.registersHL = (parentObj.registersHL & 0xFF00) | ((parentObj.registersHL << 1) & 0xFF) | ((parentObj.FCarry) ? 1 : 0);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2298,7 +2301,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RLC (HL)
 	//#0x06:
-	,function (parentObj) {
+	, function (parentObj) {
 		var temp_var = parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL);
 		parentObj.FCarry = (temp_var > 0x7F);
 		temp_var = ((temp_var << 1) & 0xFF) | ((parentObj.FCarry) ? 1 : 0);
@@ -2308,7 +2311,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RLC A
 	//#0x07:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = (parentObj.registerA > 0x7F);
 		parentObj.registerA = ((parentObj.registerA << 1) & 0xFF) | ((parentObj.FCarry) ? 1 : 0);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2316,7 +2319,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RRC B
 	//#0x08:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registerB & 0x01) == 0x01);
 		parentObj.registerB = ((parentObj.FCarry) ? 0x80 : 0) | (parentObj.registerB >> 1);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2324,7 +2327,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RRC C
 	//#0x09:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registerC & 0x01) == 0x01);
 		parentObj.registerC = ((parentObj.FCarry) ? 0x80 : 0) | (parentObj.registerC >> 1);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2332,7 +2335,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RRC D
 	//#0x0A:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registerD & 0x01) == 0x01);
 		parentObj.registerD = ((parentObj.FCarry) ? 0x80 : 0) | (parentObj.registerD >> 1);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2340,7 +2343,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RRC E
 	//#0x0B:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registerE & 0x01) == 0x01);
 		parentObj.registerE = ((parentObj.FCarry) ? 0x80 : 0) | (parentObj.registerE >> 1);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2348,7 +2351,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RRC H
 	//#0x0C:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registersHL & 0x0100) == 0x0100);
 		parentObj.registersHL = ((parentObj.FCarry) ? 0x8000 : 0) | ((parentObj.registersHL >> 1) & 0xFF00) | (parentObj.registersHL & 0xFF);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2356,7 +2359,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RRC L
 	//#0x0D:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registersHL & 0x01) == 0x01);
 		parentObj.registersHL = (parentObj.registersHL & 0xFF00) | ((parentObj.FCarry) ? 0x80 : 0) | ((parentObj.registersHL & 0xFF) >> 1);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2364,7 +2367,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RRC (HL)
 	//#0x0E:
-	,function (parentObj) {
+	, function (parentObj) {
 		var temp_var = parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL);
 		parentObj.FCarry = ((temp_var & 0x01) == 0x01);
 		temp_var = ((parentObj.FCarry) ? 0x80 : 0) | (temp_var >> 1);
@@ -2374,7 +2377,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RRC A
 	//#0x0F:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registerA & 0x01) == 0x01);
 		parentObj.registerA = ((parentObj.FCarry) ? 0x80 : 0) | (parentObj.registerA >> 1);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2382,7 +2385,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RL B
 	//#0x10:
-	,function (parentObj) {
+	, function (parentObj) {
 		var newFCarry = (parentObj.registerB > 0x7F);
 		parentObj.registerB = ((parentObj.registerB << 1) & 0xFF) | ((parentObj.FCarry) ? 1 : 0);
 		parentObj.FCarry = newFCarry;
@@ -2391,7 +2394,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RL C
 	//#0x11:
-	,function (parentObj) {
+	, function (parentObj) {
 		var newFCarry = (parentObj.registerC > 0x7F);
 		parentObj.registerC = ((parentObj.registerC << 1) & 0xFF) | ((parentObj.FCarry) ? 1 : 0);
 		parentObj.FCarry = newFCarry;
@@ -2400,7 +2403,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RL D
 	//#0x12:
-	,function (parentObj) {
+	, function (parentObj) {
 		var newFCarry = (parentObj.registerD > 0x7F);
 		parentObj.registerD = ((parentObj.registerD << 1) & 0xFF) | ((parentObj.FCarry) ? 1 : 0);
 		parentObj.FCarry = newFCarry;
@@ -2409,7 +2412,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RL E
 	//#0x13:
-	,function (parentObj) {
+	, function (parentObj) {
 		var newFCarry = (parentObj.registerE > 0x7F);
 		parentObj.registerE = ((parentObj.registerE << 1) & 0xFF) | ((parentObj.FCarry) ? 1 : 0);
 		parentObj.FCarry = newFCarry;
@@ -2418,7 +2421,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RL H
 	//#0x14:
-	,function (parentObj) {
+	, function (parentObj) {
 		var newFCarry = (parentObj.registersHL > 0x7FFF);
 		parentObj.registersHL = ((parentObj.registersHL << 1) & 0xFE00) | ((parentObj.FCarry) ? 0x100 : 0) | (parentObj.registersHL & 0xFF);
 		parentObj.FCarry = newFCarry;
@@ -2427,7 +2430,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RL L
 	//#0x15:
-	,function (parentObj) {
+	, function (parentObj) {
 		var newFCarry = ((parentObj.registersHL & 0x80) == 0x80);
 		parentObj.registersHL = (parentObj.registersHL & 0xFF00) | ((parentObj.registersHL << 1) & 0xFF) | ((parentObj.FCarry) ? 1 : 0);
 		parentObj.FCarry = newFCarry;
@@ -2436,7 +2439,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RL (HL)
 	//#0x16:
-	,function (parentObj) {
+	, function (parentObj) {
 		var temp_var = parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL);
 		var newFCarry = (temp_var > 0x7F);
 		temp_var = ((temp_var << 1) & 0xFF) | ((parentObj.FCarry) ? 1 : 0);
@@ -2447,7 +2450,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RL A
 	//#0x17:
-	,function (parentObj) {
+	, function (parentObj) {
 		var newFCarry = (parentObj.registerA > 0x7F);
 		parentObj.registerA = ((parentObj.registerA << 1) & 0xFF) | ((parentObj.FCarry) ? 1 : 0);
 		parentObj.FCarry = newFCarry;
@@ -2456,7 +2459,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RR B
 	//#0x18:
-	,function (parentObj) {
+	, function (parentObj) {
 		var newFCarry = ((parentObj.registerB & 0x01) == 0x01);
 		parentObj.registerB = ((parentObj.FCarry) ? 0x80 : 0) | (parentObj.registerB >> 1);
 		parentObj.FCarry = newFCarry;
@@ -2465,7 +2468,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RR C
 	//#0x19:
-	,function (parentObj) {
+	, function (parentObj) {
 		var newFCarry = ((parentObj.registerC & 0x01) == 0x01);
 		parentObj.registerC = ((parentObj.FCarry) ? 0x80 : 0) | (parentObj.registerC >> 1);
 		parentObj.FCarry = newFCarry;
@@ -2474,7 +2477,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RR D
 	//#0x1A:
-	,function (parentObj) {
+	, function (parentObj) {
 		var newFCarry = ((parentObj.registerD & 0x01) == 0x01);
 		parentObj.registerD = ((parentObj.FCarry) ? 0x80 : 0) | (parentObj.registerD >> 1);
 		parentObj.FCarry = newFCarry;
@@ -2483,7 +2486,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RR E
 	//#0x1B:
-	,function (parentObj) {
+	, function (parentObj) {
 		var newFCarry = ((parentObj.registerE & 0x01) == 0x01);
 		parentObj.registerE = ((parentObj.FCarry) ? 0x80 : 0) | (parentObj.registerE >> 1);
 		parentObj.FCarry = newFCarry;
@@ -2492,7 +2495,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RR H
 	//#0x1C:
-	,function (parentObj) {
+	, function (parentObj) {
 		var newFCarry = ((parentObj.registersHL & 0x0100) == 0x0100);
 		parentObj.registersHL = ((parentObj.FCarry) ? 0x8000 : 0) | ((parentObj.registersHL >> 1) & 0xFF00) | (parentObj.registersHL & 0xFF);
 		parentObj.FCarry = newFCarry;
@@ -2501,7 +2504,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RR L
 	//#0x1D:
-	,function (parentObj) {
+	, function (parentObj) {
 		var newFCarry = ((parentObj.registersHL & 0x01) == 0x01);
 		parentObj.registersHL = (parentObj.registersHL & 0xFF00) | ((parentObj.FCarry) ? 0x80 : 0) | ((parentObj.registersHL & 0xFF) >> 1);
 		parentObj.FCarry = newFCarry;
@@ -2510,7 +2513,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RR (HL)
 	//#0x1E:
-	,function (parentObj) {
+	, function (parentObj) {
 		var temp_var = parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL);
 		var newFCarry = ((temp_var & 0x01) == 0x01);
 		temp_var = ((parentObj.FCarry) ? 0x80 : 0) | (temp_var >> 1);
@@ -2521,7 +2524,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//RR A
 	//#0x1F:
-	,function (parentObj) {
+	, function (parentObj) {
 		var newFCarry = ((parentObj.registerA & 0x01) == 0x01);
 		parentObj.registerA = ((parentObj.FCarry) ? 0x80 : 0) | (parentObj.registerA >> 1);
 		parentObj.FCarry = newFCarry;
@@ -2530,7 +2533,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SLA B
 	//#0x20:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = (parentObj.registerB > 0x7F);
 		parentObj.registerB = (parentObj.registerB << 1) & 0xFF;
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2538,7 +2541,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SLA C
 	//#0x21:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = (parentObj.registerC > 0x7F);
 		parentObj.registerC = (parentObj.registerC << 1) & 0xFF;
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2546,7 +2549,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SLA D
 	//#0x22:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = (parentObj.registerD > 0x7F);
 		parentObj.registerD = (parentObj.registerD << 1) & 0xFF;
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2554,7 +2557,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SLA E
 	//#0x23:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = (parentObj.registerE > 0x7F);
 		parentObj.registerE = (parentObj.registerE << 1) & 0xFF;
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2562,7 +2565,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SLA H
 	//#0x24:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = (parentObj.registersHL > 0x7FFF);
 		parentObj.registersHL = ((parentObj.registersHL << 1) & 0xFE00) | (parentObj.registersHL & 0xFF);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2570,7 +2573,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SLA L
 	//#0x25:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registersHL & 0x0080) == 0x0080);
 		parentObj.registersHL = (parentObj.registersHL & 0xFF00) | ((parentObj.registersHL << 1) & 0xFF);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2578,7 +2581,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SLA (HL)
 	//#0x26:
-	,function (parentObj) {
+	, function (parentObj) {
 		var temp_var = parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL);
 		parentObj.FCarry = (temp_var > 0x7F);
 		temp_var = (temp_var << 1) & 0xFF;
@@ -2588,7 +2591,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SLA A
 	//#0x27:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = (parentObj.registerA > 0x7F);
 		parentObj.registerA = (parentObj.registerA << 1) & 0xFF;
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2596,7 +2599,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SRA B
 	//#0x28:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registerB & 0x01) == 0x01);
 		parentObj.registerB = (parentObj.registerB & 0x80) | (parentObj.registerB >> 1);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2604,7 +2607,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SRA C
 	//#0x29:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registerC & 0x01) == 0x01);
 		parentObj.registerC = (parentObj.registerC & 0x80) | (parentObj.registerC >> 1);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2612,7 +2615,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SRA D
 	//#0x2A:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registerD & 0x01) == 0x01);
 		parentObj.registerD = (parentObj.registerD & 0x80) | (parentObj.registerD >> 1);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2620,7 +2623,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SRA E
 	//#0x2B:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registerE & 0x01) == 0x01);
 		parentObj.registerE = (parentObj.registerE & 0x80) | (parentObj.registerE >> 1);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2628,7 +2631,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SRA H
 	//#0x2C:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registersHL & 0x0100) == 0x0100);
 		parentObj.registersHL = ((parentObj.registersHL >> 1) & 0xFF00) | (parentObj.registersHL & 0x80FF);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2636,7 +2639,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SRA L
 	//#0x2D:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registersHL & 0x0001) == 0x0001);
 		parentObj.registersHL = (parentObj.registersHL & 0xFF80) | ((parentObj.registersHL & 0xFF) >> 1);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2644,7 +2647,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SRA (HL)
 	//#0x2E:
-	,function (parentObj) {
+	, function (parentObj) {
 		var temp_var = parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL);
 		parentObj.FCarry = ((temp_var & 0x01) == 0x01);
 		temp_var = (temp_var & 0x80) | (temp_var >> 1);
@@ -2654,7 +2657,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SRA A
 	//#0x2F:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registerA & 0x01) == 0x01);
 		parentObj.registerA = (parentObj.registerA & 0x80) | (parentObj.registerA >> 1);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2662,49 +2665,49 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SWAP B
 	//#0x30:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB = ((parentObj.registerB & 0xF) << 4) | (parentObj.registerB >> 4);
 		parentObj.FZero = (parentObj.registerB == 0);
 		parentObj.FCarry = parentObj.FHalfCarry = parentObj.FSubtract = false;
 	}
 	//SWAP C
 	//#0x31:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC = ((parentObj.registerC & 0xF) << 4) | (parentObj.registerC >> 4);
 		parentObj.FZero = (parentObj.registerC == 0);
 		parentObj.FCarry = parentObj.FHalfCarry = parentObj.FSubtract = false;
 	}
 	//SWAP D
 	//#0x32:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD = ((parentObj.registerD & 0xF) << 4) | (parentObj.registerD >> 4);
 		parentObj.FZero = (parentObj.registerD == 0);
 		parentObj.FCarry = parentObj.FHalfCarry = parentObj.FSubtract = false;
 	}
 	//SWAP E
 	//#0x33:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE = ((parentObj.registerE & 0xF) << 4) | (parentObj.registerE >> 4);
 		parentObj.FZero = (parentObj.registerE == 0);
 		parentObj.FCarry = parentObj.FHalfCarry = parentObj.FSubtract = false;
 	}
 	//SWAP H
 	//#0x34:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL = ((parentObj.registersHL & 0xF00) << 4) | ((parentObj.registersHL & 0xF000) >> 4) | (parentObj.registersHL & 0xFF);
 		parentObj.FZero = (parentObj.registersHL < 0x100);
 		parentObj.FCarry = parentObj.FHalfCarry = parentObj.FSubtract = false;
 	}
 	//SWAP L
 	//#0x35:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL = (parentObj.registersHL & 0xFF00) | ((parentObj.registersHL & 0xF) << 4) | ((parentObj.registersHL & 0xF0) >> 4);
 		parentObj.FZero = ((parentObj.registersHL & 0xFF) == 0);
 		parentObj.FCarry = parentObj.FHalfCarry = parentObj.FSubtract = false;
 	}
 	//SWAP (HL)
 	//#0x36:
-	,function (parentObj) {
+	, function (parentObj) {
 		var temp_var = parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL);
 		temp_var = ((temp_var & 0xF) << 4) | (temp_var >> 4);
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, temp_var);
@@ -2713,14 +2716,14 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SWAP A
 	//#0x37:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA = ((parentObj.registerA & 0xF) << 4) | (parentObj.registerA >> 4);
 		parentObj.FZero = (parentObj.registerA == 0);
 		parentObj.FCarry = parentObj.FHalfCarry = parentObj.FSubtract = false;
 	}
 	//SRL B
 	//#0x38:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registerB & 0x01) == 0x01);
 		parentObj.registerB >>= 1;
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2728,7 +2731,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SRL C
 	//#0x39:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registerC & 0x01) == 0x01);
 		parentObj.registerC >>= 1;
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2736,7 +2739,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SRL D
 	//#0x3A:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registerD & 0x01) == 0x01);
 		parentObj.registerD >>= 1;
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2744,7 +2747,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SRL E
 	//#0x3B:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registerE & 0x01) == 0x01);
 		parentObj.registerE >>= 1;
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2752,7 +2755,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SRL H
 	//#0x3C:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registersHL & 0x0100) == 0x0100);
 		parentObj.registersHL = ((parentObj.registersHL >> 1) & 0xFF00) | (parentObj.registersHL & 0xFF);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2760,7 +2763,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SRL L
 	//#0x3D:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registersHL & 0x0001) == 0x0001);
 		parentObj.registersHL = (parentObj.registersHL & 0xFF00) | ((parentObj.registersHL & 0xFF) >> 1);
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2768,7 +2771,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SRL (HL)
 	//#0x3E:
-	,function (parentObj) {
+	, function (parentObj) {
 		var temp_var = parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL);
 		parentObj.FCarry = ((temp_var & 0x01) == 0x01);
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, temp_var >> 1);
@@ -2777,7 +2780,7 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//SRL A
 	//#0x3F:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FCarry = ((parentObj.registerA & 0x01) == 0x01);
 		parentObj.registerA >>= 1;
 		parentObj.FHalfCarry = parentObj.FSubtract = false;
@@ -2785,1136 +2788,1136 @@ GameBoyCore.prototype.CBOPCODE = [
 	}
 	//BIT 0, B
 	//#0x40:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerB & 0x01) == 0);
 	}
 	//BIT 0, C
 	//#0x41:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerC & 0x01) == 0);
 	}
 	//BIT 0, D
 	//#0x42:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerD & 0x01) == 0);
 	}
 	//BIT 0, E
 	//#0x43:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerE & 0x01) == 0);
 	}
 	//BIT 0, H
 	//#0x44:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registersHL & 0x0100) == 0);
 	}
 	//BIT 0, L
 	//#0x45:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registersHL & 0x0001) == 0);
 	}
 	//BIT 0, (HL)
 	//#0x46:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) & 0x01) == 0);
 	}
 	//BIT 0, A
 	//#0x47:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerA & 0x01) == 0);
 	}
 	//BIT 1, B
 	//#0x48:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerB & 0x02) == 0);
 	}
 	//BIT 1, C
 	//#0x49:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerC & 0x02) == 0);
 	}
 	//BIT 1, D
 	//#0x4A:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerD & 0x02) == 0);
 	}
 	//BIT 1, E
 	//#0x4B:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerE & 0x02) == 0);
 	}
 	//BIT 1, H
 	//#0x4C:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registersHL & 0x0200) == 0);
 	}
 	//BIT 1, L
 	//#0x4D:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registersHL & 0x0002) == 0);
 	}
 	//BIT 1, (HL)
 	//#0x4E:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) & 0x02) == 0);
 	}
 	//BIT 1, A
 	//#0x4F:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerA & 0x02) == 0);
 	}
 	//BIT 2, B
 	//#0x50:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerB & 0x04) == 0);
 	}
 	//BIT 2, C
 	//#0x51:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerC & 0x04) == 0);
 	}
 	//BIT 2, D
 	//#0x52:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerD & 0x04) == 0);
 	}
 	//BIT 2, E
 	//#0x53:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerE & 0x04) == 0);
 	}
 	//BIT 2, H
 	//#0x54:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registersHL & 0x0400) == 0);
 	}
 	//BIT 2, L
 	//#0x55:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registersHL & 0x0004) == 0);
 	}
 	//BIT 2, (HL)
 	//#0x56:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) & 0x04) == 0);
 	}
 	//BIT 2, A
 	//#0x57:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerA & 0x04) == 0);
 	}
 	//BIT 3, B
 	//#0x58:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerB & 0x08) == 0);
 	}
 	//BIT 3, C
 	//#0x59:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerC & 0x08) == 0);
 	}
 	//BIT 3, D
 	//#0x5A:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerD & 0x08) == 0);
 	}
 	//BIT 3, E
 	//#0x5B:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerE & 0x08) == 0);
 	}
 	//BIT 3, H
 	//#0x5C:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registersHL & 0x0800) == 0);
 	}
 	//BIT 3, L
 	//#0x5D:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registersHL & 0x0008) == 0);
 	}
 	//BIT 3, (HL)
 	//#0x5E:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) & 0x08) == 0);
 	}
 	//BIT 3, A
 	//#0x5F:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerA & 0x08) == 0);
 	}
 	//BIT 4, B
 	//#0x60:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerB & 0x10) == 0);
 	}
 	//BIT 4, C
 	//#0x61:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerC & 0x10) == 0);
 	}
 	//BIT 4, D
 	//#0x62:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerD & 0x10) == 0);
 	}
 	//BIT 4, E
 	//#0x63:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerE & 0x10) == 0);
 	}
 	//BIT 4, H
 	//#0x64:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registersHL & 0x1000) == 0);
 	}
 	//BIT 4, L
 	//#0x65:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registersHL & 0x0010) == 0);
 	}
 	//BIT 4, (HL)
 	//#0x66:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) & 0x10) == 0);
 	}
 	//BIT 4, A
 	//#0x67:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerA & 0x10) == 0);
 	}
 	//BIT 5, B
 	//#0x68:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerB & 0x20) == 0);
 	}
 	//BIT 5, C
 	//#0x69:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerC & 0x20) == 0);
 	}
 	//BIT 5, D
 	//#0x6A:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerD & 0x20) == 0);
 	}
 	//BIT 5, E
 	//#0x6B:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerE & 0x20) == 0);
 	}
 	//BIT 5, H
 	//#0x6C:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registersHL & 0x2000) == 0);
 	}
 	//BIT 5, L
 	//#0x6D:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registersHL & 0x0020) == 0);
 	}
 	//BIT 5, (HL)
 	//#0x6E:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) & 0x20) == 0);
 	}
 	//BIT 5, A
 	//#0x6F:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerA & 0x20) == 0);
 	}
 	//BIT 6, B
 	//#0x70:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerB & 0x40) == 0);
 	}
 	//BIT 6, C
 	//#0x71:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerC & 0x40) == 0);
 	}
 	//BIT 6, D
 	//#0x72:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerD & 0x40) == 0);
 	}
 	//BIT 6, E
 	//#0x73:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerE & 0x40) == 0);
 	}
 	//BIT 6, H
 	//#0x74:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registersHL & 0x4000) == 0);
 	}
 	//BIT 6, L
 	//#0x75:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registersHL & 0x0040) == 0);
 	}
 	//BIT 6, (HL)
 	//#0x76:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) & 0x40) == 0);
 	}
 	//BIT 6, A
 	//#0x77:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerA & 0x40) == 0);
 	}
 	//BIT 7, B
 	//#0x78:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerB & 0x80) == 0);
 	}
 	//BIT 7, C
 	//#0x79:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerC & 0x80) == 0);
 	}
 	//BIT 7, D
 	//#0x7A:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerD & 0x80) == 0);
 	}
 	//BIT 7, E
 	//#0x7B:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerE & 0x80) == 0);
 	}
 	//BIT 7, H
 	//#0x7C:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registersHL & 0x8000) == 0);
 	}
 	//BIT 7, L
 	//#0x7D:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registersHL & 0x0080) == 0);
 	}
 	//BIT 7, (HL)
 	//#0x7E:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) & 0x80) == 0);
 	}
 	//BIT 7, A
 	//#0x7F:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.FHalfCarry = true;
 		parentObj.FSubtract = false;
 		parentObj.FZero = ((parentObj.registerA & 0x80) == 0);
 	}
 	//RES 0, B
 	//#0x80:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB &= 0xFE;
 	}
 	//RES 0, C
 	//#0x81:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC &= 0xFE;
 	}
 	//RES 0, D
 	//#0x82:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD &= 0xFE;
 	}
 	//RES 0, E
 	//#0x83:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE &= 0xFE;
 	}
 	//RES 0, H
 	//#0x84:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL &= 0xFEFF;
 	}
 	//RES 0, L
 	//#0x85:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL &= 0xFFFE;
 	}
 	//RES 0, (HL)
 	//#0x86:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) & 0xFE);
 	}
 	//RES 0, A
 	//#0x87:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA &= 0xFE;
 	}
 	//RES 1, B
 	//#0x88:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB &= 0xFD;
 	}
 	//RES 1, C
 	//#0x89:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC &= 0xFD;
 	}
 	//RES 1, D
 	//#0x8A:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD &= 0xFD;
 	}
 	//RES 1, E
 	//#0x8B:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE &= 0xFD;
 	}
 	//RES 1, H
 	//#0x8C:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL &= 0xFDFF;
 	}
 	//RES 1, L
 	//#0x8D:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL &= 0xFFFD;
 	}
 	//RES 1, (HL)
 	//#0x8E:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) & 0xFD);
 	}
 	//RES 1, A
 	//#0x8F:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA &= 0xFD;
 	}
 	//RES 2, B
 	//#0x90:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB &= 0xFB;
 	}
 	//RES 2, C
 	//#0x91:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC &= 0xFB;
 	}
 	//RES 2, D
 	//#0x92:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD &= 0xFB;
 	}
 	//RES 2, E
 	//#0x93:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE &= 0xFB;
 	}
 	//RES 2, H
 	//#0x94:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL &= 0xFBFF;
 	}
 	//RES 2, L
 	//#0x95:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL &= 0xFFFB;
 	}
 	//RES 2, (HL)
 	//#0x96:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) & 0xFB);
 	}
 	//RES 2, A
 	//#0x97:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA &= 0xFB;
 	}
 	//RES 3, B
 	//#0x98:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB &= 0xF7;
 	}
 	//RES 3, C
 	//#0x99:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC &= 0xF7;
 	}
 	//RES 3, D
 	//#0x9A:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD &= 0xF7;
 	}
 	//RES 3, E
 	//#0x9B:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE &= 0xF7;
 	}
 	//RES 3, H
 	//#0x9C:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL &= 0xF7FF;
 	}
 	//RES 3, L
 	//#0x9D:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL &= 0xFFF7;
 	}
 	//RES 3, (HL)
 	//#0x9E:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) & 0xF7);
 	}
 	//RES 3, A
 	//#0x9F:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA &= 0xF7;
 	}
 	//RES 3, B
 	//#0xA0:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB &= 0xEF;
 	}
 	//RES 4, C
 	//#0xA1:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC &= 0xEF;
 	}
 	//RES 4, D
 	//#0xA2:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD &= 0xEF;
 	}
 	//RES 4, E
 	//#0xA3:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE &= 0xEF;
 	}
 	//RES 4, H
 	//#0xA4:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL &= 0xEFFF;
 	}
 	//RES 4, L
 	//#0xA5:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL &= 0xFFEF;
 	}
 	//RES 4, (HL)
 	//#0xA6:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) & 0xEF);
 	}
 	//RES 4, A
 	//#0xA7:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA &= 0xEF;
 	}
 	//RES 5, B
 	//#0xA8:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB &= 0xDF;
 	}
 	//RES 5, C
 	//#0xA9:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC &= 0xDF;
 	}
 	//RES 5, D
 	//#0xAA:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD &= 0xDF;
 	}
 	//RES 5, E
 	//#0xAB:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE &= 0xDF;
 	}
 	//RES 5, H
 	//#0xAC:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL &= 0xDFFF;
 	}
 	//RES 5, L
 	//#0xAD:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL &= 0xFFDF;
 	}
 	//RES 5, (HL)
 	//#0xAE:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) & 0xDF);
 	}
 	//RES 5, A
 	//#0xAF:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA &= 0xDF;
 	}
 	//RES 6, B
 	//#0xB0:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB &= 0xBF;
 	}
 	//RES 6, C
 	//#0xB1:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC &= 0xBF;
 	}
 	//RES 6, D
 	//#0xB2:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD &= 0xBF;
 	}
 	//RES 6, E
 	//#0xB3:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE &= 0xBF;
 	}
 	//RES 6, H
 	//#0xB4:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL &= 0xBFFF;
 	}
 	//RES 6, L
 	//#0xB5:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL &= 0xFFBF;
 	}
 	//RES 6, (HL)
 	//#0xB6:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) & 0xBF);
 	}
 	//RES 6, A
 	//#0xB7:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA &= 0xBF;
 	}
 	//RES 7, B
 	//#0xB8:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB &= 0x7F;
 	}
 	//RES 7, C
 	//#0xB9:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC &= 0x7F;
 	}
 	//RES 7, D
 	//#0xBA:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD &= 0x7F;
 	}
 	//RES 7, E
 	//#0xBB:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE &= 0x7F;
 	}
 	//RES 7, H
 	//#0xBC:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL &= 0x7FFF;
 	}
 	//RES 7, L
 	//#0xBD:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL &= 0xFF7F;
 	}
 	//RES 7, (HL)
 	//#0xBE:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) & 0x7F);
 	}
 	//RES 7, A
 	//#0xBF:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA &= 0x7F;
 	}
 	//SET 0, B
 	//#0xC0:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB |= 0x01;
 	}
 	//SET 0, C
 	//#0xC1:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC |= 0x01;
 	}
 	//SET 0, D
 	//#0xC2:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD |= 0x01;
 	}
 	//SET 0, E
 	//#0xC3:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE |= 0x01;
 	}
 	//SET 0, H
 	//#0xC4:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL |= 0x0100;
 	}
 	//SET 0, L
 	//#0xC5:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL |= 0x01;
 	}
 	//SET 0, (HL)
 	//#0xC6:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) | 0x01);
 	}
 	//SET 0, A
 	//#0xC7:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA |= 0x01;
 	}
 	//SET 1, B
 	//#0xC8:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB |= 0x02;
 	}
 	//SET 1, C
 	//#0xC9:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC |= 0x02;
 	}
 	//SET 1, D
 	//#0xCA:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD |= 0x02;
 	}
 	//SET 1, E
 	//#0xCB:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE |= 0x02;
 	}
 	//SET 1, H
 	//#0xCC:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL |= 0x0200;
 	}
 	//SET 1, L
 	//#0xCD:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL |= 0x02;
 	}
 	//SET 1, (HL)
 	//#0xCE:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) | 0x02);
 	}
 	//SET 1, A
 	//#0xCF:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA |= 0x02;
 	}
 	//SET 2, B
 	//#0xD0:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB |= 0x04;
 	}
 	//SET 2, C
 	//#0xD1:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC |= 0x04;
 	}
 	//SET 2, D
 	//#0xD2:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD |= 0x04;
 	}
 	//SET 2, E
 	//#0xD3:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE |= 0x04;
 	}
 	//SET 2, H
 	//#0xD4:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL |= 0x0400;
 	}
 	//SET 2, L
 	//#0xD5:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL |= 0x04;
 	}
 	//SET 2, (HL)
 	//#0xD6:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) | 0x04);
 	}
 	//SET 2, A
 	//#0xD7:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA |= 0x04;
 	}
 	//SET 3, B
 	//#0xD8:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB |= 0x08;
 	}
 	//SET 3, C
 	//#0xD9:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC |= 0x08;
 	}
 	//SET 3, D
 	//#0xDA:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD |= 0x08;
 	}
 	//SET 3, E
 	//#0xDB:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE |= 0x08;
 	}
 	//SET 3, H
 	//#0xDC:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL |= 0x0800;
 	}
 	//SET 3, L
 	//#0xDD:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL |= 0x08;
 	}
 	//SET 3, (HL)
 	//#0xDE:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) | 0x08);
 	}
 	//SET 3, A
 	//#0xDF:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA |= 0x08;
 	}
 	//SET 4, B
 	//#0xE0:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB |= 0x10;
 	}
 	//SET 4, C
 	//#0xE1:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC |= 0x10;
 	}
 	//SET 4, D
 	//#0xE2:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD |= 0x10;
 	}
 	//SET 4, E
 	//#0xE3:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE |= 0x10;
 	}
 	//SET 4, H
 	//#0xE4:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL |= 0x1000;
 	}
 	//SET 4, L
 	//#0xE5:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL |= 0x10;
 	}
 	//SET 4, (HL)
 	//#0xE6:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) | 0x10);
 	}
 	//SET 4, A
 	//#0xE7:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA |= 0x10;
 	}
 	//SET 5, B
 	//#0xE8:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB |= 0x20;
 	}
 	//SET 5, C
 	//#0xE9:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC |= 0x20;
 	}
 	//SET 5, D
 	//#0xEA:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD |= 0x20;
 	}
 	//SET 5, E
 	//#0xEB:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE |= 0x20;
 	}
 	//SET 5, H
 	//#0xEC:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL |= 0x2000;
 	}
 	//SET 5, L
 	//#0xED:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL |= 0x20;
 	}
 	//SET 5, (HL)
 	//#0xEE:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) | 0x20);
 	}
 	//SET 5, A
 	//#0xEF:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA |= 0x20;
 	}
 	//SET 6, B
 	//#0xF0:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB |= 0x40;
 	}
 	//SET 6, C
 	//#0xF1:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC |= 0x40;
 	}
 	//SET 6, D
 	//#0xF2:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD |= 0x40;
 	}
 	//SET 6, E
 	//#0xF3:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE |= 0x40;
 	}
 	//SET 6, H
 	//#0xF4:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL |= 0x4000;
 	}
 	//SET 6, L
 	//#0xF5:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL |= 0x40;
 	}
 	//SET 6, (HL)
 	//#0xF6:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) | 0x40);
 	}
 	//SET 6, A
 	//#0xF7:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA |= 0x40;
 	}
 	//SET 7, B
 	//#0xF8:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerB |= 0x80;
 	}
 	//SET 7, C
 	//#0xF9:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerC |= 0x80;
 	}
 	//SET 7, D
 	//#0xFA:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerD |= 0x80;
 	}
 	//SET 7, E
 	//#0xFB:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerE |= 0x80;
 	}
 	//SET 7, H
 	//#0xFC:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL |= 0x8000;
 	}
 	//SET 7, L
 	//#0xFD:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registersHL |= 0x80;
 	}
 	//SET 7, (HL)
 	//#0xFE:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.memoryWriter[parentObj.registersHL](parentObj, parentObj.registersHL, parentObj.memoryReader[parentObj.registersHL](parentObj, parentObj.registersHL) | 0x80);
 	}
 	//SET 7, A
 	//#0xFF:
-	,function (parentObj) {
+	, function (parentObj) {
 		parentObj.registerA |= 0x80;
 	}
 ];
 GameBoyCore.prototype.TICKTable = [		//Number of machine cycles for each instruction:
-/*   0,  1,  2,  3,  4,  5,  6,  7,      8,  9,  A, B,  C,  D, E,  F*/
-     4, 12,  8,  8,  4,  4,  8,  4,     20,  8,  8, 8,  4,  4, 8,  4,  //0
-     4, 12,  8,  8,  4,  4,  8,  4,     12,  8,  8, 8,  4,  4, 8,  4,  //1
-     8, 12,  8,  8,  4,  4,  8,  4,      8,  8,  8, 8,  4,  4, 8,  4,  //2
-     8, 12,  8,  8, 12, 12, 12,  4,      8,  8,  8, 8,  4,  4, 8,  4,  //3
+	/*   0,  1,  2,  3,  4,  5,  6,  7,      8,  9,  A, B,  C,  D, E,  F*/
+	4, 12, 8, 8, 4, 4, 8, 4, 20, 8, 8, 8, 4, 4, 8, 4,  //0
+	4, 12, 8, 8, 4, 4, 8, 4, 12, 8, 8, 8, 4, 4, 8, 4,  //1
+	8, 12, 8, 8, 4, 4, 8, 4, 8, 8, 8, 8, 4, 4, 8, 4,  //2
+	8, 12, 8, 8, 12, 12, 12, 4, 8, 8, 8, 8, 4, 4, 8, 4,  //3
 
-     4,  4,  4,  4,  4,  4,  8,  4,      4,  4,  4, 4,  4,  4, 8,  4,  //4
-     4,  4,  4,  4,  4,  4,  8,  4,      4,  4,  4, 4,  4,  4, 8,  4,  //5
-     4,  4,  4,  4,  4,  4,  8,  4,      4,  4,  4, 4,  4,  4, 8,  4,  //6
-     8,  8,  8,  8,  8,  8,  4,  8,      4,  4,  4, 4,  4,  4, 8,  4,  //7
+	4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,  //4
+	4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,  //5
+	4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,  //6
+	8, 8, 8, 8, 8, 8, 4, 8, 4, 4, 4, 4, 4, 4, 8, 4,  //7
 
-     4,  4,  4,  4,  4,  4,  8,  4,      4,  4,  4, 4,  4,  4, 8,  4,  //8
-     4,  4,  4,  4,  4,  4,  8,  4,      4,  4,  4, 4,  4,  4, 8,  4,  //9
-     4,  4,  4,  4,  4,  4,  8,  4,      4,  4,  4, 4,  4,  4, 8,  4,  //A
-     4,  4,  4,  4,  4,  4,  8,  4,      4,  4,  4, 4,  4,  4, 8,  4,  //B
+	4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,  //8
+	4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,  //9
+	4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,  //A
+	4, 4, 4, 4, 4, 4, 8, 4, 4, 4, 4, 4, 4, 4, 8, 4,  //B
 
-     8, 12, 12, 16, 12, 16,  8, 16,      8, 16, 12, 0, 12, 24, 8, 16,  //C
-     8, 12, 12,  4, 12, 16,  8, 16,      8, 16, 12, 4, 12,  4, 8, 16,  //D
-    12, 12,  8,  4,  4, 16,  8, 16,     16,  4, 16, 4,  4,  4, 8, 16,  //E
-    12, 12,  8,  4,  4, 16,  8, 16,     12,  8, 16, 4,  0,  4, 8, 16   //F
+	8, 12, 12, 16, 12, 16, 8, 16, 8, 16, 12, 0, 12, 24, 8, 16,  //C
+	8, 12, 12, 4, 12, 16, 8, 16, 8, 16, 12, 4, 12, 4, 8, 16,  //D
+	12, 12, 8, 4, 4, 16, 8, 16, 16, 4, 16, 4, 4, 4, 8, 16,  //E
+	12, 12, 8, 4, 4, 16, 8, 16, 12, 8, 16, 4, 0, 4, 8, 16   //F
 ];
 GameBoyCore.prototype.SecondaryTICKTable = [	//Number of machine cycles for each 0xCBXX instruction:
-/*  0, 1, 2, 3, 4, 5,  6, 7,        8, 9, A, B, C, D,  E, F*/
-    8, 8, 8, 8, 8, 8, 16, 8,        8, 8, 8, 8, 8, 8, 16, 8,  //0
-    8, 8, 8, 8, 8, 8, 16, 8,        8, 8, 8, 8, 8, 8, 16, 8,  //1
-    8, 8, 8, 8, 8, 8, 16, 8,        8, 8, 8, 8, 8, 8, 16, 8,  //2
-    8, 8, 8, 8, 8, 8, 16, 8,        8, 8, 8, 8, 8, 8, 16, 8,  //3
+	/*  0, 1, 2, 3, 4, 5,  6, 7,        8, 9, A, B, C, D,  E, F*/
+	8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  //0
+	8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  //1
+	8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  //2
+	8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  //3
 
-    8, 8, 8, 8, 8, 8, 12, 8,        8, 8, 8, 8, 8, 8, 12, 8,  //4
-    8, 8, 8, 8, 8, 8, 12, 8,        8, 8, 8, 8, 8, 8, 12, 8,  //5
-    8, 8, 8, 8, 8, 8, 12, 8,        8, 8, 8, 8, 8, 8, 12, 8,  //6
-    8, 8, 8, 8, 8, 8, 12, 8,        8, 8, 8, 8, 8, 8, 12, 8,  //7
+	8, 8, 8, 8, 8, 8, 12, 8, 8, 8, 8, 8, 8, 8, 12, 8,  //4
+	8, 8, 8, 8, 8, 8, 12, 8, 8, 8, 8, 8, 8, 8, 12, 8,  //5
+	8, 8, 8, 8, 8, 8, 12, 8, 8, 8, 8, 8, 8, 8, 12, 8,  //6
+	8, 8, 8, 8, 8, 8, 12, 8, 8, 8, 8, 8, 8, 8, 12, 8,  //7
 
-    8, 8, 8, 8, 8, 8, 16, 8,        8, 8, 8, 8, 8, 8, 16, 8,  //8
-    8, 8, 8, 8, 8, 8, 16, 8,        8, 8, 8, 8, 8, 8, 16, 8,  //9
-    8, 8, 8, 8, 8, 8, 16, 8,        8, 8, 8, 8, 8, 8, 16, 8,  //A
-    8, 8, 8, 8, 8, 8, 16, 8,        8, 8, 8, 8, 8, 8, 16, 8,  //B
+	8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  //8
+	8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  //9
+	8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  //A
+	8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  //B
 
-    8, 8, 8, 8, 8, 8, 16, 8,        8, 8, 8, 8, 8, 8, 16, 8,  //C
-    8, 8, 8, 8, 8, 8, 16, 8,        8, 8, 8, 8, 8, 8, 16, 8,  //D
-    8, 8, 8, 8, 8, 8, 16, 8,        8, 8, 8, 8, 8, 8, 16, 8,  //E
-    8, 8, 8, 8, 8, 8, 16, 8,        8, 8, 8, 8, 8, 8, 16, 8   //F
+	8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  //C
+	8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  //D
+	8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8,  //E
+	8, 8, 8, 8, 8, 8, 16, 8, 8, 8, 8, 8, 8, 8, 16, 8   //F
 ];
 GameBoyCore.prototype.saveSRAMState = function () {
 	if (!this.cBATT || this.MBCRam.length == 0) {
@@ -3925,7 +3928,7 @@ GameBoyCore.prototype.saveSRAMState = function () {
 		//Return the MBC RAM for backup...
 		return this.fromTypedArray(this.MBCRam);
 	}
-}
+};
 GameBoyCore.prototype.saveRTCState = function () {
 	if (!this.cTIMER) {
 		//No battery backup...
@@ -3949,7 +3952,7 @@ GameBoyCore.prototype.saveRTCState = function () {
 			this.RTCHALT
 		];
 	}
-}
+};
 GameBoyCore.prototype.saveState = function () {
 	return [
 		this.fromTypedArray(this.ROM),
@@ -4160,7 +4163,7 @@ GameBoyCore.prototype.saveState = function () {
 		this.audioClocksUntilNextEvent,
 		this.audioClocksUntilNextEventCounter
 	];
-}
+};
 GameBoyCore.prototype.returnFromState = function (returnedFrom) {
 	var index = 0;
 	var state = returnedFrom.slice(0);
@@ -4383,7 +4386,7 @@ GameBoyCore.prototype.returnFromState = function (returnedFrom) {
 	this.initSound();
 	this.noiseSampleTable = (this.channel4BitRange == 0x7FFF) ? this.LSFR15Table : this.LSFR7Table;
 	this.channel4VolumeShifter = (this.channel4BitRange == 0x7FFF) ? 15 : 7;
-}
+};
 GameBoyCore.prototype.returnFromRTCState = function () {
 	if (typeof this.openRTC == "function" && this.cTIMER) {
 		var rtcData = this.openRTC(this.name);
@@ -4402,14 +4405,14 @@ GameBoyCore.prototype.returnFromRTCState = function () {
 		this.RTCDayOverFlow = rtcData[index++];
 		this.RTCHALT = rtcData[index];
 	}
-}
+};
 GameBoyCore.prototype.start = function () {
 	this.initMemory();	//Write the startup memory.
 	this.ROMLoad();		//Load the ROM into memory and get cartridge information from it.
 	this.initLCD();		//Initialize the graphics.
 	this.initSound();	//Sound object initialization.
 	this.run();			//Start the emulation.
-}
+};
 GameBoyCore.prototype.initMemory = function () {
 	//Initialize the RAM:
 	this.memory = this.getTypedArray(0x10000, 0, "uint8");
@@ -4418,7 +4421,7 @@ GameBoyCore.prototype.initMemory = function () {
 	this.TICKTable = this.toTypedArray(this.TICKTable, "uint8");
 	this.SecondaryTICKTable = this.toTypedArray(this.SecondaryTICKTable, "uint8");
 	this.channel3PCM = this.getTypedArray(0x20, 0, "int8");
-}
+};
 GameBoyCore.prototype.generateCacheArray = function (tileAmount) {
 	var tileArray = [];
 	var tileNumber = 0;
@@ -4426,7 +4429,7 @@ GameBoyCore.prototype.generateCacheArray = function (tileAmount) {
 		tileArray[tileNumber++] = this.getTypedArray(64, 0, "uint8");
 	}
 	return tileArray;
-}
+};
 GameBoyCore.prototype.initSkipBootstrap = function () {
 	//Fill in the boot ROM set register values
 	//Default values to the GB boot ROM values, then fill in the GBC boot ROM values after ROM loading
@@ -4573,7 +4576,7 @@ GameBoyCore.prototype.initSkipBootstrap = function () {
 	this.drewBlank = 0;
 	this.midScanlineOffset = -1;
 	this.currentX = 0;
-}
+};
 GameBoyCore.prototype.initBootstrap = function () {
 	//Start as an unset device:
 	cout("Starting the selected boot ROM.", 0);
@@ -4602,14 +4605,14 @@ GameBoyCore.prototype.initBootstrap = function () {
 	this.VinLeftChannelMasterVolume = 8;
 	this.VinRightChannelMasterVolume = 8;
 	this.memory[0xFF00] = 0xF;	//Set the joypad state.
-}
+};
 GameBoyCore.prototype.ROMLoad = function () {
 	//Load the first two ROM banks (0x0000 - 0x7FFF) into regular gameboy memory:
 	this.ROM = [];
 	this.usedBootROM = settings[1] && ((!settings[11] && this.GBCBOOTROM.length == 0x800) || (settings[11] && this.GBBOOTROM.length == 0x100));
 	var maxLength = this.ROMImage.length;
 	if (maxLength < 0x4000) {
-		throw(new Error("ROM image size too small."));
+		throw (new Error("ROM image size too small."));
 	}
 	this.ROM = this.getTypedArray(maxLength, 0, "uint8");
 	var romIndex = 0;
@@ -4655,7 +4658,7 @@ GameBoyCore.prototype.ROMLoad = function () {
 	this.interpretCartridge();
 	//Check for IRQ matching upon initialization:
 	this.checkIRQMatching();
-}
+};
 GameBoyCore.prototype.getROMImage = function () {
 	//Return the binary version of the ROM image currently running:
 	if (this.ROMImage.length > 0) {
@@ -4666,7 +4669,7 @@ GameBoyCore.prototype.getROMImage = function () {
 		this.ROMImage += String.fromCharCode(this.ROM[index]);
 	}
 	return this.ROMImage;
-}
+};
 GameBoyCore.prototype.interpretCartridge = function () {
 	// ROM name
 	for (var index = 0x134; index < 0x13F; index++) {
@@ -4897,7 +4900,7 @@ GameBoyCore.prototype.interpretCartridge = function () {
 		cout("New style license code: " + cNewLicense, 0);
 	}
 	this.ROMImage = "";	//Memory consumption reduction.
-}
+};
 GameBoyCore.prototype.disableBootROM = function () {
 	//Remove any traces of the boot ROM from ROM memory.
 	for (var index = 0; index < 0x100; ++index) {
@@ -4919,7 +4922,7 @@ GameBoyCore.prototype.disableBootROM = function () {
 	else {
 		this.recompileBootIOWriteHandling();
 	}
-}
+};
 GameBoyCore.prototype.initializeTiming = function () {
 	//Emulator Timing:
 	this.clocksPerSecond = this.emulatorSpeed * 0x400000;
@@ -4927,14 +4930,14 @@ GameBoyCore.prototype.initializeTiming = function () {
 	this.CPUCyclesTotalRoundoff = this.baseCPUCyclesPerIteration % 4;
 	this.CPUCyclesTotalBase = this.CPUCyclesTotal = (this.baseCPUCyclesPerIteration - this.CPUCyclesTotalRoundoff) | 0;
 	this.CPUCyclesTotalCurrent = 0;
-}
+};
 GameBoyCore.prototype.setSpeed = function (speed) {
 	this.emulatorSpeed = speed;
 	this.initializeTiming();
 	if (this.audioHandle) {
 		this.initSound();
 	}
-}
+};
 GameBoyCore.prototype.setupRAM = function () {
 	//Setup the auxilliary/switchable RAM:
 	if (this.cMBC2) {
@@ -4973,10 +4976,10 @@ GameBoyCore.prototype.setupRAM = function () {
 	}
 	this.memoryReadJumpCompile();
 	this.memoryWriteJumpCompile();
-}
+};
 GameBoyCore.prototype.MBCRAMUtilized = function () {
 	return this.cMBC1 || this.cMBC2 || this.cMBC3 || this.cMBC5 || this.cMBC7 || this.cRUMBLE;
-}
+};
 GameBoyCore.prototype.recomputeDimension = function () {
 	initNewCanvas();
 	//Cache some dimension info:
@@ -4994,7 +4997,7 @@ GameBoyCore.prototype.recomputeDimension = function () {
 	this.offscreenWidth = (!settings[12]) ? 160 : this.canvas.width;
 	this.offscreenHeight = (!settings[12]) ? 144 : this.canvas.height;
 	this.offscreenRGBCount = this.offscreenWidth * this.offscreenHeight * 4;
-}
+};
 GameBoyCore.prototype.initLCD = function () {
 	this.recomputeDimension();
 	if (this.offscreenRGBCount != 92160) {
@@ -5011,13 +5014,13 @@ GameBoyCore.prototype.initLCD = function () {
 		this.canvasOffscreen.height = this.offscreenHeight;
 		this.drawContextOffscreen = this.canvasOffscreen.getContext("2d");
 		this.drawContextOnscreen = this.canvas.getContext("2d");
-		this.canvas.setAttribute("style", (this.canvas.getAttribute("style") || "") + "; image-rendering: " + ((settings[13]) ? "auto" : "-webkit-optimize-contrast") + ";" +
-		"image-rendering: " + ((settings[13]) ? "optimizeQuality" : "-o-crisp-edges") + ";" +
-		"image-rendering: " + ((settings[13]) ? "optimizeQuality" : "-moz-crisp-edges") + ";" +
-		"-ms-interpolation-mode: " + ((settings[13]) ? "bicubic" : "nearest-neighbor") + ";");
-		this.drawContextOffscreen.webkitImageSmoothingEnabled  = settings[13];
+		// this.canvas.setAttribute("style", (this.canvas.getAttribute("style") || "") + "; image-rendering: " + ((settings[13]) ? "auto" : "-webkit-optimize-contrast") + ";" +
+		// "image-rendering: " + ((settings[13]) ? "optimizeQuality" : "-o-crisp-edges") + ";" +
+		// "image-rendering: " + ((settings[13]) ? "optimizeQuality" : "-moz-crisp-edges") + ";" +
+		// "-ms-interpolation-mode: " + ((settings[13]) ? "bicubic" : "nearest-neighbor") + ";");
+		this.drawContextOffscreen.webkitImageSmoothingEnabled = settings[13];
 		this.drawContextOffscreen.mozImageSmoothingEnabled = settings[13];
-		this.drawContextOnscreen.webkitImageSmoothingEnabled  = settings[13];
+		this.drawContextOnscreen.webkitImageSmoothingEnabled = settings[13];
 		this.drawContextOnscreen.mozImageSmoothingEnabled = settings[13];
 		//Get a CanvasPixelArray buffer:
 		try {
@@ -5044,9 +5047,9 @@ GameBoyCore.prototype.initLCD = function () {
 		this.requestDraw();
 	}
 	catch (error) {
-		throw(new Error("HTML5 Canvas support required: " + error.message + "file: " + error.fileName + ", line: " + error.lineNumber));
+		throw (new Error("HTML5 Canvas support required: " + error.message + "file: " + error.fileName + ", line: " + error.lineNumber));
 	}
-}
+};
 GameBoyCore.prototype.graphicsBlit = function () {
 	if (this.offscreenWidth == this.onscreenWidth && this.offscreenHeight == this.onscreenHeight) {
 		this.drawContextOnscreen.putImageData(this.canvasBuffer, 0, 0);
@@ -5055,7 +5058,7 @@ GameBoyCore.prototype.graphicsBlit = function () {
 		this.drawContextOffscreen.putImageData(this.canvasBuffer, 0, 0);
 		this.drawContextOnscreen.drawImage(this.canvasOffscreen, 0, 0, this.onscreenWidth, this.onscreenHeight);
 	}
-}
+};
 GameBoyCore.prototype.JoyPadEvent = function (key, down) {
 	if (down) {
 		this.JoyPad &= 0xFF ^ (1 << key);
@@ -5070,7 +5073,7 @@ GameBoyCore.prototype.JoyPadEvent = function (key, down) {
 	}
 	this.memory[0xFF00] = (this.memory[0xFF00] & 0x30) + ((((this.memory[0xFF00] & 0x20) == 0) ? (this.JoyPad >> 4) : 0xF) & (((this.memory[0xFF00] & 0x10) == 0) ? (this.JoyPad & 0xF) : 0xF));
 	this.CPUStopped = false;
-}
+};
 GameBoyCore.prototype.GyroEvent = function (x, y) {
 	x *= -100;
 	x += 2047;
@@ -5080,7 +5083,7 @@ GameBoyCore.prototype.GyroEvent = function (x, y) {
 	y += 2047;
 	this.highY = y >> 8;
 	this.lowY = y & 0xFF;
-}
+};
 GameBoyCore.prototype.initSound = function () {
 	this.audioResamplerFirstPassFactor = Math.max(Math.min(Math.floor(this.clocksPerSecond / 44100), Math.floor(0xFFFF / 0x1E0)), 1);
 	this.downSampleInputDivider = 1 / (this.audioResamplerFirstPassFactor * 0xF0);
@@ -5094,12 +5097,12 @@ GameBoyCore.prototype.initSound = function () {
 		//Mute the audio output, as it has an immediate silencing effect:
 		this.audioHandle.changeVolume(0);
 	}
-}
+};
 GameBoyCore.prototype.changeVolume = function () {
 	if (settings[0] && this.audioHandle) {
 		this.audioHandle.changeVolume(settings[3]);
 	}
-}
+};
 GameBoyCore.prototype.initAudioBuffer = function () {
 	this.audioIndex = 0;
 	this.audioDestinationPosition = 0;
@@ -5107,7 +5110,7 @@ GameBoyCore.prototype.initAudioBuffer = function () {
 	this.bufferContainAmount = Math.max(this.baseCPUCyclesPerIteration * settings[7] / this.audioResamplerFirstPassFactor, 4096) << 1;
 	this.numSamplesTotal = (this.baseCPUCyclesPerIteration / this.audioResamplerFirstPassFactor) << 1;
 	this.audioBuffer = this.getTypedArray(this.numSamplesTotal, 0, "float32");
-}
+};
 GameBoyCore.prototype.intializeWhiteNoise = function () {
 	//Noise Sample Tables:
 	var randomFactor = 1;
@@ -5166,7 +5169,7 @@ GameBoyCore.prototype.intializeWhiteNoise = function () {
 	}
 	//Set the default noise table:
 	this.noiseSampleTable = this.LSFR15Table;
-}
+};
 GameBoyCore.prototype.audioUnderrunAdjustment = function () {
 	if (settings[0]) {
 		var underrunAmount = this.audioHandle.remainingBuffer();
@@ -5177,7 +5180,7 @@ GameBoyCore.prototype.audioUnderrunAdjustment = function () {
 			}
 		}
 	}
-}
+};
 GameBoyCore.prototype.initializeAudioStartState = function () {
 	this.channel1FrequencyTracker = 0x2000;
 	this.channel1DutyTracker = 0;
@@ -5252,7 +5255,7 @@ GameBoyCore.prototype.initializeAudioStartState = function () {
 	this.channel3OutputLevelCache();
 	this.channel4OutputLevelCache();
 	this.noiseSampleTable = this.LSFR15Table;
-}
+};
 GameBoyCore.prototype.outputAudio = function () {
 	this.audioBuffer[this.audioDestinationPosition++] = (this.downsampleInput >>> 16) * this.downSampleInputDivider - 1;
 	this.audioBuffer[this.audioDestinationPosition++] = (this.downsampleInput & 0xFFFF) * this.downSampleInputDivider - 1;
@@ -5261,7 +5264,7 @@ GameBoyCore.prototype.outputAudio = function () {
 		this.audioDestinationPosition = 0;
 	}
 	this.downsampleInput = 0;
-}
+};
 //Below are the audio generation functions timed against the CPU:
 GameBoyCore.prototype.generateAudio = function (numSamples) {
 	var multiplier = 0;
@@ -5302,7 +5305,7 @@ GameBoyCore.prototype.generateAudio = function (numSamples) {
 			}
 		}
 	}
-}
+};
 //Generate audio, but don't actually output it (Used for when sound is disabled by user/browser):
 GameBoyCore.prototype.generateAudioFake = function (numSamples) {
 	if (this.soundMasterEnabled && !this.CPUStopped) {
@@ -5320,7 +5323,7 @@ GameBoyCore.prototype.generateAudioFake = function (numSamples) {
 			}
 		}
 	}
-}
+};
 GameBoyCore.prototype.audioJIT = function () {
 	//Audio Sample Generation Timing:
 	if (settings[0]) {
@@ -5330,7 +5333,7 @@ GameBoyCore.prototype.audioJIT = function () {
 		this.generateAudioFake(this.audioTicks);
 	}
 	this.audioTicks = 0;
-}
+};
 GameBoyCore.prototype.audioComputeSequencer = function () {
 	switch (this.sequencePosition++) {
 		case 0:
@@ -5351,7 +5354,7 @@ GameBoyCore.prototype.audioComputeSequencer = function () {
 			this.clockAudioEnvelope();
 			this.sequencePosition = 0;
 	}
-}
+};
 GameBoyCore.prototype.clockAudioLength = function () {
 	//Channel 1:
 	if (this.channel1totalLength > 1) {
@@ -5389,7 +5392,7 @@ GameBoyCore.prototype.clockAudioLength = function () {
 		this.channel4EnableCheck();
 		this.memory[0xFF26] &= 0xF7;	//Channel #4 On Flag Off
 	}
-}
+};
 GameBoyCore.prototype.clockAudioSweep = function () {
 	//Channel 1:
 	if (!this.channel1SweepFault && this.channel1timeSweep > 0) {
@@ -5397,7 +5400,7 @@ GameBoyCore.prototype.clockAudioSweep = function () {
 			this.runAudioSweep();
 		}
 	}
-}
+};
 GameBoyCore.prototype.runAudioSweep = function () {
 	//Channel 1:
 	if (this.channel1lastTimeSweep > 0) {
@@ -5435,7 +5438,7 @@ GameBoyCore.prototype.runAudioSweep = function () {
 			this.channel1EnableCheck();
 		}
 	}
-}
+};
 GameBoyCore.prototype.channel1AudioSweepPerformDummy = function () {
 	//Channel 1:
 	if (this.channel1frequencySweepDivider > 0) {
@@ -5456,7 +5459,7 @@ GameBoyCore.prototype.channel1AudioSweepPerformDummy = function () {
 			}
 		}
 	}
-}
+};
 GameBoyCore.prototype.clockAudioEnvelope = function () {
 	//Channel 1:
 	if (this.channel1envelopeSweepsLast > -1) {
@@ -5536,7 +5539,7 @@ GameBoyCore.prototype.clockAudioEnvelope = function () {
 			}
 		}
 	}
-}
+};
 GameBoyCore.prototype.computeAudioChannels = function () {
 	//Clock down the four audio channels to the next closest audio event:
 	this.channel1FrequencyCounter -= this.audioClocksUntilNextEvent;
@@ -5571,21 +5574,21 @@ GameBoyCore.prototype.computeAudioChannels = function () {
 	}
 	//Find the number of clocks to next closest counter event:
 	this.audioClocksUntilNextEventCounter = this.audioClocksUntilNextEvent = Math.min(this.channel1FrequencyCounter, this.channel2FrequencyCounter, this.channel3Counter, this.channel4Counter);
-}
+};
 GameBoyCore.prototype.channel1EnableCheck = function () {
 	this.channel1Enabled = ((this.channel1consecutive || this.channel1totalLength > 0) && !this.channel1SweepFault && this.channel1canPlay);
 	this.channel1OutputLevelSecondaryCache();
-}
+};
 GameBoyCore.prototype.channel1VolumeEnableCheck = function () {
 	this.channel1canPlay = (this.memory[0xFF12] > 7);
 	this.channel1EnableCheck();
 	this.channel1OutputLevelSecondaryCache();
-}
+};
 GameBoyCore.prototype.channel1OutputLevelCache = function () {
 	this.channel1currentSampleLeft = (this.leftChannel1) ? this.channel1envelopeVolume : 0;
 	this.channel1currentSampleRight = (this.rightChannel1) ? this.channel1envelopeVolume : 0;
 	this.channel1OutputLevelSecondaryCache();
-}
+};
 GameBoyCore.prototype.channel1OutputLevelSecondaryCache = function () {
 	if (this.channel1Enabled) {
 		this.channel1currentSampleLeftSecondary = this.channel1currentSampleLeft;
@@ -5596,7 +5599,7 @@ GameBoyCore.prototype.channel1OutputLevelSecondaryCache = function () {
 		this.channel1currentSampleRightSecondary = 0;
 	}
 	this.channel1OutputLevelTrimaryCache();
-}
+};
 GameBoyCore.prototype.channel1OutputLevelTrimaryCache = function () {
 	if (this.channel1CachedDuty[this.channel1DutyTracker] && settings[14][0]) {
 		this.channel1currentSampleLeftTrimary = this.channel1currentSampleLeftSecondary;
@@ -5607,21 +5610,21 @@ GameBoyCore.prototype.channel1OutputLevelTrimaryCache = function () {
 		this.channel1currentSampleRightTrimary = 0;
 	}
 	this.mixerOutputLevelCache();
-}
+};
 GameBoyCore.prototype.channel2EnableCheck = function () {
 	this.channel2Enabled = ((this.channel2consecutive || this.channel2totalLength > 0) && this.channel2canPlay);
 	this.channel2OutputLevelSecondaryCache();
-}
+};
 GameBoyCore.prototype.channel2VolumeEnableCheck = function () {
 	this.channel2canPlay = (this.memory[0xFF17] > 7);
 	this.channel2EnableCheck();
 	this.channel2OutputLevelSecondaryCache();
-}
+};
 GameBoyCore.prototype.channel2OutputLevelCache = function () {
 	this.channel2currentSampleLeft = (this.leftChannel2) ? this.channel2envelopeVolume : 0;
 	this.channel2currentSampleRight = (this.rightChannel2) ? this.channel2envelopeVolume : 0;
 	this.channel2OutputLevelSecondaryCache();
-}
+};
 GameBoyCore.prototype.channel2OutputLevelSecondaryCache = function () {
 	if (this.channel2Enabled) {
 		this.channel2currentSampleLeftSecondary = this.channel2currentSampleLeft;
@@ -5632,7 +5635,7 @@ GameBoyCore.prototype.channel2OutputLevelSecondaryCache = function () {
 		this.channel2currentSampleRightSecondary = 0;
 	}
 	this.channel2OutputLevelTrimaryCache();
-}
+};
 GameBoyCore.prototype.channel2OutputLevelTrimaryCache = function () {
 	if (this.channel2CachedDuty[this.channel2DutyTracker] && settings[14][1]) {
 		this.channel2currentSampleLeftTrimary = this.channel2currentSampleLeftSecondary;
@@ -5643,16 +5646,16 @@ GameBoyCore.prototype.channel2OutputLevelTrimaryCache = function () {
 		this.channel2currentSampleRightTrimary = 0;
 	}
 	this.mixerOutputLevelCache();
-}
+};
 GameBoyCore.prototype.channel3EnableCheck = function () {
 	this.channel3Enabled = (/*this.channel3canPlay && */(this.channel3consecutive || this.channel3totalLength > 0));
 	this.channel3OutputLevelSecondaryCache();
-}
+};
 GameBoyCore.prototype.channel3OutputLevelCache = function () {
 	this.channel3currentSampleLeft = (this.leftChannel3) ? this.cachedChannel3Sample : 0;
 	this.channel3currentSampleRight = (this.rightChannel3) ? this.cachedChannel3Sample : 0;
 	this.channel3OutputLevelSecondaryCache();
-}
+};
 GameBoyCore.prototype.channel3OutputLevelSecondaryCache = function () {
 	if (this.channel3Enabled && settings[14][2]) {
 		this.channel3currentSampleLeftSecondary = this.channel3currentSampleLeft;
@@ -5663,21 +5666,21 @@ GameBoyCore.prototype.channel3OutputLevelSecondaryCache = function () {
 		this.channel3currentSampleRightSecondary = 0;
 	}
 	this.mixerOutputLevelCache();
-}
+};
 GameBoyCore.prototype.channel4EnableCheck = function () {
 	this.channel4Enabled = ((this.channel4consecutive || this.channel4totalLength > 0) && this.channel4canPlay);
 	this.channel4OutputLevelSecondaryCache();
-}
+};
 GameBoyCore.prototype.channel4VolumeEnableCheck = function () {
 	this.channel4canPlay = (this.memory[0xFF21] > 7);
 	this.channel4EnableCheck();
 	this.channel4OutputLevelSecondaryCache();
-}
+};
 GameBoyCore.prototype.channel4OutputLevelCache = function () {
 	this.channel4currentSampleLeft = (this.leftChannel4) ? this.cachedChannel4Sample : 0;
 	this.channel4currentSampleRight = (this.rightChannel4) ? this.cachedChannel4Sample : 0;
 	this.channel4OutputLevelSecondaryCache();
-}
+};
 GameBoyCore.prototype.channel4OutputLevelSecondaryCache = function () {
 	if (this.channel4Enabled && settings[14][3]) {
 		this.channel4currentSampleLeftSecondary = this.channel4currentSampleLeft;
@@ -5688,15 +5691,15 @@ GameBoyCore.prototype.channel4OutputLevelSecondaryCache = function () {
 		this.channel4currentSampleRightSecondary = 0;
 	}
 	this.mixerOutputLevelCache();
-}
+};
 GameBoyCore.prototype.mixerOutputLevelCache = function () {
 	this.mixerOutputCache = ((((this.channel1currentSampleLeftTrimary + this.channel2currentSampleLeftTrimary + this.channel3currentSampleLeftSecondary + this.channel4currentSampleLeftSecondary) * this.VinLeftChannelMasterVolume) << 16) |
-	((this.channel1currentSampleRightTrimary + this.channel2currentSampleRightTrimary + this.channel3currentSampleRightSecondary + this.channel4currentSampleRightSecondary) * this.VinRightChannelMasterVolume));
-}
+		((this.channel1currentSampleRightTrimary + this.channel2currentSampleRightTrimary + this.channel3currentSampleRightSecondary + this.channel4currentSampleRightSecondary) * this.VinRightChannelMasterVolume));
+};
 GameBoyCore.prototype.channel3UpdateCache = function () {
 	this.cachedChannel3Sample = this.channel3PCM[this.channel3lastSampleLookup] >> this.channel3patternType;
 	this.channel3OutputLevelCache();
-}
+};
 GameBoyCore.prototype.channel3WriteRAM = function (address, data) {
 	if (this.channel3canPlay) {
 		this.audioJIT();
@@ -5706,11 +5709,11 @@ GameBoyCore.prototype.channel3WriteRAM = function (address, data) {
 	address <<= 1;
 	this.channel3PCM[address] = data >> 4;
 	this.channel3PCM[address | 1] = data & 0xF;
-}
+};
 GameBoyCore.prototype.channel4UpdateCache = function () {
 	this.cachedChannel4Sample = this.noiseSampleTable[this.channel4currentVolume | this.channel4lastSampleLookup];
 	this.channel4OutputLevelCache();
-}
+};
 GameBoyCore.prototype.run = function () {
 	//The preprocessing before the actual iteration loop:
 	if ((this.stopEmulator & 2) == 0) {
@@ -5748,7 +5751,7 @@ GameBoyCore.prototype.run = function () {
 			pause();
 		}
 	}
-}
+};
 GameBoyCore.prototype.executeIteration = function () {
 	//Iterate the interpreter loop:
 	var opcodeToExecute = 0;
@@ -5820,7 +5823,7 @@ GameBoyCore.prototype.executeIteration = function () {
 			this.iterationEndRoutine();
 		}
 	}
-}
+};
 GameBoyCore.prototype.iterationEndRoutine = function () {
 	if ((this.stopEmulator & 0x1) == 0) {
 		this.audioJIT();	//Make sure we at least output once per iteration.
@@ -5833,7 +5836,7 @@ GameBoyCore.prototype.iterationEndRoutine = function () {
 		this.CPUCyclesTotalCurrent += this.CPUCyclesTotalRoundoff;
 		this.recalculateIterationClockLimit();
 	}
-}
+};
 GameBoyCore.prototype.handleSTOP = function () {
 	this.CPUStopped = true;						//Stop CPU until joypad input changes.
 	this.iterationEndRoutine();
@@ -5841,15 +5844,15 @@ GameBoyCore.prototype.handleSTOP = function () {
 		this.audioTicks -= this.emulatorTicks;
 		this.audioJIT();
 	}
-}
+};
 GameBoyCore.prototype.recalculateIterationClockLimit = function () {
 	var endModulus = this.CPUCyclesTotalCurrent % 4;
 	this.CPUCyclesTotal = this.CPUCyclesTotalBase + this.CPUCyclesTotalCurrent - endModulus;
 	this.CPUCyclesTotalCurrent = endModulus;
-}
+};
 GameBoyCore.prototype.recalculateIterationClockLimitForAudio = function (audioClocking) {
 	this.CPUCyclesTotal += Math.min((audioClocking >> 2) << 2, this.CPUCyclesTotalBase << 1);
-}
+};
 GameBoyCore.prototype.scanLineMode2 = function () {	//OAM Search Period
 	if (this.STATTracker != 1) {
 		if (this.mode2TriggerSTAT) {
@@ -5859,7 +5862,7 @@ GameBoyCore.prototype.scanLineMode2 = function () {	//OAM Search Period
 		this.STATTracker = 1;
 		this.modeSTAT = 2;
 	}
-}
+};
 GameBoyCore.prototype.scanLineMode3 = function () {	//Scan Line Drawing Period
 	if (this.modeSTAT != 3) {
 		if (this.STATTracker == 0 && this.mode2TriggerSTAT) {
@@ -5869,7 +5872,7 @@ GameBoyCore.prototype.scanLineMode3 = function () {	//Scan Line Drawing Period
 		this.STATTracker = 1;
 		this.modeSTAT = 3;
 	}
-}
+};
 GameBoyCore.prototype.scanLineMode0 = function () {	//Horizontal Blanking Period
 	if (this.modeSTAT != 0) {
 		if (this.STATTracker != 2) {
@@ -5896,7 +5899,7 @@ GameBoyCore.prototype.scanLineMode0 = function () {	//Horizontal Blanking Period
 			this.modeSTAT = 0;
 		}
 	}
-}
+};
 GameBoyCore.prototype.clocksUntilLYCMatch = function () {
 	if (this.memory[0xFF45] != 0) {
 		if (this.memory[0xFF45] > this.actualScanLine) {
@@ -5905,7 +5908,7 @@ GameBoyCore.prototype.clocksUntilLYCMatch = function () {
 		return 456 * (154 - this.actualScanLine + this.memory[0xFF45]);
 	}
 	return (456 * ((this.actualScanLine == 153 && this.memory[0xFF44] == 0) ? 154 : (153 - this.actualScanLine))) + 8;
-}
+};
 GameBoyCore.prototype.clocksUntilMode0 = function () {
 	switch (this.modeSTAT) {
 		case 0:
@@ -5923,7 +5926,7 @@ GameBoyCore.prototype.clocksUntilMode0 = function () {
 			this.updateSpriteCount(0);
 			return this.spriteCount + (456 * (154 - this.actualScanLine));
 	}
-}
+};
 GameBoyCore.prototype.updateSpriteCount = function (line) {
 	this.spriteCount = 252;
 	if (this.cGBC && this.gfxSpriteShow) {										//Is the window enabled and are we in CGB mode?
@@ -5937,7 +5940,7 @@ GameBoyCore.prototype.updateSpriteCount = function (line) {
 			}
 		}
 	}
-}
+};
 GameBoyCore.prototype.matchLYC = function () {	//LYC Register Compare
 	if (this.memory[0xFF44] == this.memory[0xFF45]) {
 		this.memory[0xFF41] |= 0x04;
@@ -5949,7 +5952,7 @@ GameBoyCore.prototype.matchLYC = function () {	//LYC Register Compare
 	else {
 		this.memory[0xFF41] &= 0x7B;
 	}
-}
+};
 GameBoyCore.prototype.updateCore = function () {
 	//Update the clocking for the LCD emulation:
 	this.LCDTicks += this.CPUTicks >> this.doubleSpeedShifter;	//LCD Timing
@@ -5985,7 +5988,7 @@ GameBoyCore.prototype.updateCore = function () {
 			this.memory[0xFF01] = ((this.memory[0xFF01] << 1) & 0xFE) | 0x01;	//We could shift in actual link data here if we were to implement such!!!
 		}
 	}
-}
+};
 GameBoyCore.prototype.updateCoreFull = function () {
 	//Update the state machine:
 	this.updateCore();
@@ -5993,7 +5996,7 @@ GameBoyCore.prototype.updateCoreFull = function () {
 	if (this.emulatorTicks >= this.CPUCyclesTotal) {
 		this.iterationEndRoutine();
 	}
-}
+};
 GameBoyCore.prototype.initializeLCDController = function () {
 	//Display on hanlding:
 	var line = 0;
@@ -6046,7 +6049,7 @@ GameBoyCore.prototype.initializeLCDController = function () {
 					parentObj.modeSTAT = 2;
 					parentObj.LINECONTROL[parentObj.actualScanLine](parentObj);	//Scan Line and STAT Mode Control.
 				}
-			}
+			};
 		}
 		else if (line == 143) {
 			//We're on the last visible scan line of the LCD screen:
@@ -6113,7 +6116,7 @@ GameBoyCore.prototype.initializeLCDController = function () {
 					}
 					parentObj.LINECONTROL[144](parentObj);	//Scan Line and STAT Mode Control.
 				}
-			}
+			};
 		}
 		else if (line < 153) {
 			//In VBlank
@@ -6135,7 +6138,7 @@ GameBoyCore.prototype.initializeLCDController = function () {
 					}
 					parentObj.LINECONTROL[parentObj.actualScanLine](parentObj);	//Scan Line and STAT Mode Control.
 				}
-			}
+			};
 		}
 		else {
 			//VBlank Ending (We're on the last actual scan line)
@@ -6163,11 +6166,11 @@ GameBoyCore.prototype.initializeLCDController = function () {
 						parentObj.LINECONTROL[0](parentObj);	//Scan Line and STAT Mode Control.
 					}
 				}
-			}
+			};
 		}
 		++line;
 	}
-}
+};
 GameBoyCore.prototype.DisplayShowOff = function () {
 	if (this.drewBlank == 0) {
 		//Output a blank screen to the output framebuffer:
@@ -6175,7 +6178,7 @@ GameBoyCore.prototype.DisplayShowOff = function () {
 		this.drewFrame = true;
 	}
 	this.drewBlank = 2;
-}
+};
 GameBoyCore.prototype.executeHDMA = function () {
 	this.DMAWrite(1);
 	if (this.halt) {
@@ -6195,7 +6198,7 @@ GameBoyCore.prototype.executeHDMA = function () {
 	else {
 		--this.memory[0xFF55];
 	}
-}
+};
 GameBoyCore.prototype.clockUpdate = function () {
 	if (this.cTIMER) {
 		var dateObj = new Date();
@@ -6212,7 +6215,7 @@ GameBoyCore.prototype.clockUpdate = function () {
 					this.RTCMinutes -= 60;
 					++this.RTCHours;
 					if (this.RTCHours >= 24) {
-						this.RTCHours -= 24
+						this.RTCHours -= 24;
 						++this.RTCDays;
 						if (this.RTCDays >= 512) {
 							this.RTCDays -= 512;
@@ -6223,17 +6226,17 @@ GameBoyCore.prototype.clockUpdate = function () {
 			}
 		}
 	}
-}
+};
 GameBoyCore.prototype.prepareFrame = function () {
 	//Copy the internal frame buffer to the output buffer:
 	this.swizzleFrameBuffer();
 	this.drewFrame = true;
-}
+};
 GameBoyCore.prototype.requestDraw = function () {
 	if (this.drewFrame) {
 		this.dispatchDraw();
 	}
-}
+};
 GameBoyCore.prototype.dispatchDraw = function () {
 	if (this.offscreenRGBCount > 0) {
 		//We actually updated the graphics internally, so copy out:
@@ -6244,7 +6247,7 @@ GameBoyCore.prototype.dispatchDraw = function () {
 			this.resizeFrameBuffer();
 		}
 	}
-}
+};
 GameBoyCore.prototype.processDraw = function (frameBuffer) {
 	var canvasRGBALength = this.offscreenRGBCount;
 	var canvasData = this.canvasBuffer.data;
@@ -6256,7 +6259,7 @@ GameBoyCore.prototype.processDraw = function (frameBuffer) {
 	}
 	this.graphicsBlit();
 	this.drewFrame = false;
-}
+};
 GameBoyCore.prototype.swizzleFrameBuffer = function () {
 	//Convert our dirty 24-bit (24-bit, with internal render flags above it) framebuffer to an 8-bit buffer with separate indices for the RGB channels:
 	var frameBuffer = this.frameBuffer;
@@ -6267,7 +6270,7 @@ GameBoyCore.prototype.swizzleFrameBuffer = function () {
 		swizzledFrame[canvasIndex++] = (frameBuffer[bufferIndex] >> 8) & 0xFF;		//Green
 		swizzledFrame[canvasIndex++] = frameBuffer[bufferIndex++] & 0xFF;			//Blue
 	}
-}
+};
 GameBoyCore.prototype.clearFrameBuffer = function () {
 	var bufferIndex = 0;
 	var frameBuffer = this.swizzledFrame;
@@ -6283,14 +6286,14 @@ GameBoyCore.prototype.clearFrameBuffer = function () {
 			frameBuffer[bufferIndex++] = 222;
 		}
 	}
-}
+};
 GameBoyCore.prototype.resizeFrameBuffer = function () {
 	//Resize in javascript with resize.js:
 	if (this.resizePathClear) {
 		this.resizePathClear = false;
 		this.resizer.resize(this.swizzledFrame);
 	}
-}
+};
 GameBoyCore.prototype.compileResizeFrameBufferFunction = function () {
 	if (this.offscreenRGBCount > 0) {
 		var parentObj = this;
@@ -6301,7 +6304,7 @@ GameBoyCore.prototype.compileResizeFrameBufferFunction = function () {
 			parentObj.resizePathClear = true;
 		});
 	}
-}
+};
 GameBoyCore.prototype.renderScanLine = function (scanlineToRender) {
 	this.pixelStart = scanlineToRender * 160;
 	if (this.bgEnabled) {
@@ -6319,7 +6322,7 @@ GameBoyCore.prototype.renderScanLine = function (scanlineToRender) {
 	this.SpriteLayerRender(scanlineToRender);
 	this.currentX = 0;
 	this.midScanlineOffset = -1;
-}
+};
 GameBoyCore.prototype.renderMidScanLine = function () {
 	if (this.actualScanLine < 144 && this.modeSTAT == 3) {
 		//TODO: Get this accurate:
@@ -6345,7 +6348,7 @@ GameBoyCore.prototype.renderMidScanLine = function () {
 			this.currentX = this.pixelEnd;
 		}
 	}
-}
+};
 GameBoyCore.prototype.initializeModeSpecificArrays = function () {
 	this.LCDCONTROL = (this.LCDisOn) ? this.LINECONTROL : this.DISPLAYOFFCONTROL;
 	if (this.cGBC) {
@@ -6367,7 +6370,7 @@ GameBoyCore.prototype.initializeModeSpecificArrays = function () {
 		this.OAMAddressCache = this.getTypedArray(10, 0, "int32");
 	}
 	this.renderPathBuild();
-}
+};
 GameBoyCore.prototype.GBCtoGBModeAdjust = function () {
 	cout("Stepping down from GBC mode.", 0);
 	this.VRAM = this.GBCMemory = this.BGCHRCurrentBank = this.BGCHRBank2 = null;
@@ -6393,7 +6396,7 @@ GameBoyCore.prototype.GBCtoGBModeAdjust = function () {
 	this.renderPathBuild();
 	this.memoryReadJumpCompile();
 	this.memoryWriteJumpCompile();
-}
+};
 GameBoyCore.prototype.renderPathBuild = function () {
 	if (!this.cGBC) {
 		this.BGLayerRender = this.BGGBLayerRender;
@@ -6404,7 +6407,7 @@ GameBoyCore.prototype.renderPathBuild = function () {
 		this.priorityFlaggingPathRebuild();
 		this.SpriteLayerRender = this.SpriteGBCLayerRender;
 	}
-}
+};
 GameBoyCore.prototype.priorityFlaggingPathRebuild = function () {
 	if (this.BGPriorityEnabled) {
 		this.BGLayerRender = this.BGGBCLayerRender;
@@ -6414,7 +6417,7 @@ GameBoyCore.prototype.priorityFlaggingPathRebuild = function () {
 		this.BGLayerRender = this.BGGBCLayerRenderNoPriorityFlagging;
 		this.WindowLayerRender = this.WindowGBCLayerRenderNoPriorityFlagging;
 	}
-}
+};
 GameBoyCore.prototype.initializeReferencesFromSaveState = function () {
 	this.LCDCONTROL = (this.LCDisOn) ? this.LINECONTROL : this.DISPLAYOFFCONTROL;
 	var tileIndex = 0;
@@ -6449,14 +6452,14 @@ GameBoyCore.prototype.initializeReferencesFromSaveState = function () {
 		}
 	}
 	this.renderPathBuild();
-}
+};
 GameBoyCore.prototype.RGBTint = function (value) {
 	//Adjustment for the GBC's tinting (According to Gambatte):
 	var r = value & 0x1F;
 	var g = (value >> 5) & 0x1F;
 	var b = (value >> 10) & 0x1F;
 	return ((r * 13 + g * 2 + b) >> 1) << 16 | (g * 3 + b) << 9 | (r * 3 + g * 2 + b * 11) >> 1;
-}
+};
 GameBoyCore.prototype.getGBCColor = function () {
 	//GBC Colorization of DMG ROMs:
 	//BG
@@ -6479,31 +6482,31 @@ GameBoyCore.prototype.getGBCColor = function () {
 	this.updateGBOBJPalette(0, this.memory[0xFF48]);
 	this.updateGBOBJPalette(1, this.memory[0xFF49]);
 	this.colorizedGBPalettes = true;
-}
+};
 GameBoyCore.prototype.updateGBRegularBGPalette = function (data) {
 	this.gbBGPalette[0] = this.colors[data & 0x03] | 0x2000000;
 	this.gbBGPalette[1] = this.colors[(data >> 2) & 0x03];
 	this.gbBGPalette[2] = this.colors[(data >> 4) & 0x03];
 	this.gbBGPalette[3] = this.colors[data >> 6];
-}
+};
 GameBoyCore.prototype.updateGBColorizedBGPalette = function (data) {
 	//GB colorization:
 	this.gbBGColorizedPalette[0] = this.cachedBGPaletteConversion[data & 0x03] | 0x2000000;
 	this.gbBGColorizedPalette[1] = this.cachedBGPaletteConversion[(data >> 2) & 0x03];
 	this.gbBGColorizedPalette[2] = this.cachedBGPaletteConversion[(data >> 4) & 0x03];
 	this.gbBGColorizedPalette[3] = this.cachedBGPaletteConversion[data >> 6];
-}
+};
 GameBoyCore.prototype.updateGBRegularOBJPalette = function (index, data) {
 	this.gbOBJPalette[index | 1] = this.colors[(data >> 2) & 0x03];
 	this.gbOBJPalette[index | 2] = this.colors[(data >> 4) & 0x03];
 	this.gbOBJPalette[index | 3] = this.colors[data >> 6];
-}
+};
 GameBoyCore.prototype.updateGBColorizedOBJPalette = function (index, data) {
 	//GB colorization:
 	this.gbOBJColorizedPalette[index | 1] = this.cachedOBJPaletteConversion[index | ((data >> 2) & 0x03)];
 	this.gbOBJColorizedPalette[index | 2] = this.cachedOBJPaletteConversion[index | ((data >> 4) & 0x03)];
 	this.gbOBJColorizedPalette[index | 3] = this.cachedOBJPaletteConversion[index | (data >> 6)];
-}
+};
 GameBoyCore.prototype.updateGBCBGPalette = function (index, data) {
 	if (this.gbcBGRawPalette[index] != data) {
 		this.midScanLineJIT();
@@ -6524,7 +6527,7 @@ GameBoyCore.prototype.updateGBCBGPalette = function (index, data) {
 			this.gbcBGPalette[0x20 | index] = 0x1000000 | data;
 		}
 	}
-}
+};
 GameBoyCore.prototype.updateGBCOBJPalette = function (index, data) {
 	if (this.gbcOBJRawPalette[index] != data) {
 		//Update the color palette for OBJ tiles since it changed:
@@ -6535,7 +6538,7 @@ GameBoyCore.prototype.updateGBCOBJPalette = function (index, data) {
 			this.gbcOBJPalette[index >> 1] = 0x1000000 | this.RGBTint((this.gbcOBJRawPalette[index | 1] << 8) | this.gbcOBJRawPalette[index & 0x3E]);
 		}
 	}
-}
+};
 GameBoyCore.prototype.BGGBLayerRender = function (scanlineToRender) {
 	var scrollYAdjusted = (this.backgroundY + scanlineToRender) & 0xFF;						//The line of the BG we're at.
 	var tileYLine = (scrollYAdjusted & 7) << 3;
@@ -6623,7 +6626,7 @@ GameBoyCore.prototype.BGGBLayerRender = function (scanlineToRender) {
 			}
 		}
 	}
-}
+};
 GameBoyCore.prototype.BGGBCLayerRender = function (scanlineToRender) {
 	var scrollYAdjusted = (this.backgroundY + scanlineToRender) & 0xFF;						//The line of the BG we're at.
 	var tileYLine = (scrollYAdjusted & 7) << 3;
@@ -6721,7 +6724,7 @@ GameBoyCore.prototype.BGGBCLayerRender = function (scanlineToRender) {
 			}
 		}
 	}
-}
+};
 GameBoyCore.prototype.BGGBCLayerRenderNoPriorityFlagging = function (scanlineToRender) {
 	var scrollYAdjusted = (this.backgroundY + scanlineToRender) & 0xFF;						//The line of the BG we're at.
 	var tileYLine = (scrollYAdjusted & 7) << 3;
@@ -6819,7 +6822,7 @@ GameBoyCore.prototype.BGGBCLayerRenderNoPriorityFlagging = function (scanlineToR
 			}
 		}
 	}
-}
+};
 GameBoyCore.prototype.WindowGBLayerRender = function (scanlineToRender) {
 	if (this.gfxWindowDisplay) {									//Is the window enabled?
 		var scrollYAdjusted = scanlineToRender - this.windowY;		//The line of the BG we're at.
@@ -6883,7 +6886,7 @@ GameBoyCore.prototype.WindowGBLayerRender = function (scanlineToRender) {
 			}
 		}
 	}
-}
+};
 GameBoyCore.prototype.WindowGBCLayerRender = function (scanlineToRender) {
 	if (this.gfxWindowDisplay) {									//Is the window enabled?
 		var scrollYAdjusted = scanlineToRender - this.windowY;		//The line of the BG we're at.
@@ -6953,7 +6956,7 @@ GameBoyCore.prototype.WindowGBCLayerRender = function (scanlineToRender) {
 			}
 		}
 	}
-}
+};
 GameBoyCore.prototype.WindowGBCLayerRenderNoPriorityFlagging = function (scanlineToRender) {
 	if (this.gfxWindowDisplay) {									//Is the window enabled?
 		var scrollYAdjusted = scanlineToRender - this.windowY;		//The line of the BG we're at.
@@ -7023,7 +7026,7 @@ GameBoyCore.prototype.WindowGBCLayerRenderNoPriorityFlagging = function (scanlin
 			}
 		}
 	}
-}
+};
 GameBoyCore.prototype.SpriteGBLayerRender = function (scanlineToRender) {
 	if (this.gfxSpriteShow) {										//Are sprites enabled?
 		var lineAdjusted = scanlineToRender + 0x10;
@@ -7113,7 +7116,7 @@ GameBoyCore.prototype.SpriteGBLayerRender = function (scanlineToRender) {
 			}
 		}
 	}
-}
+};
 GameBoyCore.prototype.findLowestSpriteDrawable = function (scanlineToRender, drawableRange) {
 	var address = 0xFE00;
 	var spriteCount = 0;
@@ -7126,7 +7129,7 @@ GameBoyCore.prototype.findLowestSpriteDrawable = function (scanlineToRender, dra
 		address += 4;
 	}
 	return spriteCount;
-}
+};
 GameBoyCore.prototype.SpriteGBCLayerRender = function (scanlineToRender) {
 	if (this.gfxSpriteShow) {										//Are sprites enabled?
 		var OAMAddress = 0xFE00;
@@ -7205,7 +7208,7 @@ GameBoyCore.prototype.SpriteGBCLayerRender = function (scanlineToRender) {
 			}
 		}
 	}
-}
+};
 //Generate only a single tile line for the GB tile cache mode:
 GameBoyCore.prototype.generateGBTileLine = function (address) {
 	var lineCopy = (this.memory[0x1 | address] << 8) | this.memory[0x9FFE & address];
@@ -7219,7 +7222,7 @@ GameBoyCore.prototype.generateGBTileLine = function (address) {
 	tileBlock[address | 2] = ((lineCopy & 0x2000) >> 12) | ((lineCopy & 0x20) >> 5);
 	tileBlock[address | 1] = ((lineCopy & 0x4000) >> 13) | ((lineCopy & 0x40) >> 6);
 	tileBlock[address] = ((lineCopy & 0x8000) >> 14) | ((lineCopy & 0x80) >> 7);
-}
+};
 //Generate only a single tile line for the GBC tile cache mode (Bank 1):
 GameBoyCore.prototype.generateGBCTileLineBank1 = function (address) {
 	var lineCopy = (this.memory[0x1 | address] << 8) | this.memory[0x9FFE & address];
@@ -7238,7 +7241,7 @@ GameBoyCore.prototype.generateGBCTileLineBank1 = function (address) {
 	tileBlock4[addressFlipped | 5] = tileBlock2[address | 5] = tileBlock3[addressFlipped | 2] = tileBlock1[address | 2] = ((lineCopy & 0x2000) >> 12) | ((lineCopy & 0x20) >> 5);
 	tileBlock4[addressFlipped | 6] = tileBlock2[address | 6] = tileBlock3[addressFlipped | 1] = tileBlock1[address | 1] = ((lineCopy & 0x4000) >> 13) | ((lineCopy & 0x40) >> 6);
 	tileBlock4[addressFlipped | 7] = tileBlock2[address | 7] = tileBlock3[addressFlipped] = tileBlock1[address] = ((lineCopy & 0x8000) >> 14) | ((lineCopy & 0x80) >> 7);
-}
+};
 //Generate all the flip combinations for a full GBC VRAM bank 1 tile:
 GameBoyCore.prototype.generateGBCTileBank1 = function (vramAddress) {
 	var address = vramAddress >> 4;
@@ -7264,7 +7267,7 @@ GameBoyCore.prototype.generateGBCTileBank1 = function (vramAddress) {
 		addressFlipped -= 8;
 		vramAddress += 2;
 	} while (addressFlipped > -1);
-}
+};
 //Generate only a single tile line for the GBC tile cache mode (Bank 2):
 GameBoyCore.prototype.generateGBCTileLineBank2 = function (address) {
 	var lineCopy = (this.VRAM[0x1 | address] << 8) | this.VRAM[0x1FFE & address];
@@ -7282,7 +7285,7 @@ GameBoyCore.prototype.generateGBCTileLineBank2 = function (address) {
 	tileBlock4[addressFlipped | 5] = tileBlock2[address | 5] = tileBlock3[addressFlipped | 2] = tileBlock1[address | 2] = ((lineCopy & 0x2000) >> 12) | ((lineCopy & 0x20) >> 5);
 	tileBlock4[addressFlipped | 6] = tileBlock2[address | 6] = tileBlock3[addressFlipped | 1] = tileBlock1[address | 1] = ((lineCopy & 0x4000) >> 13) | ((lineCopy & 0x40) >> 6);
 	tileBlock4[addressFlipped | 7] = tileBlock2[address | 7] = tileBlock3[addressFlipped] = tileBlock1[address] = ((lineCopy & 0x8000) >> 14) | ((lineCopy & 0x80) >> 7);
-}
+};
 //Generate all the flip combinations for a full GBC VRAM bank 2 tile:
 GameBoyCore.prototype.generateGBCTileBank2 = function (vramAddress) {
 	var address = vramAddress >> 4;
@@ -7307,7 +7310,7 @@ GameBoyCore.prototype.generateGBCTileBank2 = function (vramAddress) {
 		addressFlipped -= 8;
 		vramAddress += 2;
 	} while (addressFlipped > -1);
-}
+};
 //Generate only a single tile line for the GB tile cache mode (OAM accessible range):
 GameBoyCore.prototype.generateGBOAMTileLine = function (address) {
 	var lineCopy = (this.memory[0x1 | address] << 8) | this.memory[0x9FFE & address];
@@ -7326,18 +7329,18 @@ GameBoyCore.prototype.generateGBOAMTileLine = function (address) {
 	tileBlock4[addressFlipped | 5] = tileBlock2[address | 5] = tileBlock3[addressFlipped | 2] = tileBlock1[address | 2] = ((lineCopy & 0x2000) >> 12) | ((lineCopy & 0x20) >> 5);
 	tileBlock4[addressFlipped | 6] = tileBlock2[address | 6] = tileBlock3[addressFlipped | 1] = tileBlock1[address | 1] = ((lineCopy & 0x4000) >> 13) | ((lineCopy & 0x40) >> 6);
 	tileBlock4[addressFlipped | 7] = tileBlock2[address | 7] = tileBlock3[addressFlipped] = tileBlock1[address] = ((lineCopy & 0x8000) >> 14) | ((lineCopy & 0x80) >> 7);
-}
+};
 GameBoyCore.prototype.graphicsJIT = function () {
 	if (this.LCDisOn) {
 		this.totalLinesPassed = 0;			//Mark frame for ensuring a JIT pass for the next framebuffer output.
 		this.graphicsJITScanlineGroup();
 	}
-}
+};
 GameBoyCore.prototype.graphicsJITVBlank = function () {
 	//JIT the graphics to v-blank framing:
 	this.totalLinesPassed += this.queuedScanLines;
 	this.graphicsJITScanlineGroup();
-}
+};
 GameBoyCore.prototype.graphicsJITScanlineGroup = function () {
 	//Normal rendering JIT, where we try to do groups of scanlines at once:
 	while (this.queuedScanLines > 0) {
@@ -7350,7 +7353,7 @@ GameBoyCore.prototype.graphicsJITScanlineGroup = function () {
 		}
 		--this.queuedScanLines;
 	}
-}
+};
 GameBoyCore.prototype.incrementScanLineQueue = function () {
 	if (this.queuedScanLines < 144) {
 		++this.queuedScanLines;
@@ -7365,11 +7368,11 @@ GameBoyCore.prototype.incrementScanLineQueue = function () {
 			this.lastUnrenderedLine = 0;
 		}
 	}
-}
+};
 GameBoyCore.prototype.midScanLineJIT = function () {
 	this.graphicsJIT();
 	this.renderMidScanLine();
-}
+};
 //Check for the highest priority IRQ to fire:
 GameBoyCore.prototype.launchIRQ = function () {
 	var bitShift = 0;
@@ -7395,7 +7398,7 @@ GameBoyCore.prototype.launchIRQ = function () {
 		}
 		testbit = 1 << ++bitShift;
 	} while (bitShift < 5);
-}
+};
 /*
 	Check for IRQs to be fired while not in HALT:
 */
@@ -7403,7 +7406,7 @@ GameBoyCore.prototype.checkIRQMatching = function () {
 	if (this.IME) {
 		this.IRQLineMatched = this.interruptsEnabled & this.interruptsRequested & 0x1F;
 	}
-}
+};
 /*
 	Handle the HALT opcode by predicting all IRQ cases correctly,
 	then selecting the next closest IRQ firing from the prediction to
@@ -7487,16 +7490,16 @@ GameBoyCore.prototype.calculateHALTPeriod = function () {
 		//Will stay in HALT forever (Stuck in HALT forever), but the APU and LCD are still clocked, so don't pause:
 		this.CPUTicks += maxClocks;
 	}
-}
+};
 //Memory Reading:
 GameBoyCore.prototype.memoryRead = function (address) {
 	//Act as a wrapper for reading the returns from the compiled jumps to memory.
 	return this.memoryReader[address](this, address);	//This seems to be faster than the usual if/else.
-}
+};
 GameBoyCore.prototype.memoryHighRead = function (address) {
 	//Act as a wrapper for reading the returns from the compiled jumps to memory.
 	return this.memoryHighReader[address](this, address);	//This seems to be faster than the usual if/else.
-}
+};
 GameBoyCore.prototype.memoryReadJumpCompile = function () {
 	//Faster in some browsers, since we are doing less conditionals overall by implementing them in advance.
 	for (var index = 0x0000; index <= 0xFFFF; index++) {
@@ -7557,25 +7560,25 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 					//JOYPAD:
 					this.memoryHighReader[0] = this.memoryReader[0xFF00] = function (parentObj, address) {
 						return 0xC0 | parentObj.memory[0xFF00];	//Top nibble returns as set.
-					}
+					};
 					break;
 				case 0xFF01:
 					//SB
 					this.memoryHighReader[0x01] = this.memoryReader[0xFF01] = function (parentObj, address) {
 						return (parentObj.memory[0xFF02] < 0x80) ? parentObj.memory[0xFF01] : 0xFF;
-					}
+					};
 					break;
 				case 0xFF02:
 					//SC
 					if (this.cGBC) {
 						this.memoryHighReader[0x02] = this.memoryReader[0xFF02] = function (parentObj, address) {
 							return ((parentObj.serialTimer <= 0) ? 0x7C : 0xFC) | parentObj.memory[0xFF02];
-						}
+						};
 					}
 					else {
 						this.memoryHighReader[0x02] = this.memoryReader[0xFF02] = function (parentObj, address) {
 							return ((parentObj.serialTimer <= 0) ? 0x7E : 0xFE) | parentObj.memory[0xFF02];
-						}
+						};
 					}
 					break;
 				case 0xFF03:
@@ -7588,7 +7591,7 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 						parentObj.DIVTicks &= 0xFF;
 						return parentObj.memory[0xFF04];
 
-					}
+					};
 					break;
 				case 0xFF05:
 				case 0xFF06:
@@ -7598,7 +7601,7 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 				case 0xFF07:
 					this.memoryHighReader[0x07] = this.memoryReader[0xFF07] = function (parentObj, address) {
 						return 0xF8 | parentObj.memory[0xFF07];
-					}
+					};
 					break;
 				case 0xFF08:
 				case 0xFF09:
@@ -7613,17 +7616,17 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 					//IF
 					this.memoryHighReader[0x0F] = this.memoryReader[0xFF0F] = function (parentObj, address) {
 						return 0xE0 | parentObj.interruptsRequested;
-					}
+					};
 					break;
 				case 0xFF10:
 					this.memoryHighReader[0x10] = this.memoryReader[0xFF10] = function (parentObj, address) {
 						return 0x80 | parentObj.memory[0xFF10];
-					}
+					};
 					break;
 				case 0xFF11:
 					this.memoryHighReader[0x11] = this.memoryReader[0xFF11] = function (parentObj, address) {
 						return 0x3F | parentObj.memory[0xFF11];
-					}
+					};
 					break;
 				case 0xFF12:
 					this.memoryHighReader[0x12] = this.memoryHighReadNormal;
@@ -7635,7 +7638,7 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 				case 0xFF14:
 					this.memoryHighReader[0x14] = this.memoryReader[0xFF14] = function (parentObj, address) {
 						return 0xBF | parentObj.memory[0xFF14];
-					}
+					};
 					break;
 				case 0xFF15:
 					this.memoryHighReader[0x15] = this.memoryReadBAD;
@@ -7644,7 +7647,7 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 				case 0xFF16:
 					this.memoryHighReader[0x16] = this.memoryReader[0xFF16] = function (parentObj, address) {
 						return 0x3F | parentObj.memory[0xFF16];
-					}
+					};
 					break;
 				case 0xFF17:
 					this.memoryHighReader[0x17] = this.memoryHighReadNormal;
@@ -7656,12 +7659,12 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 				case 0xFF19:
 					this.memoryHighReader[0x19] = this.memoryReader[0xFF19] = function (parentObj, address) {
 						return 0xBF | parentObj.memory[0xFF19];
-					}
+					};
 					break;
 				case 0xFF1A:
 					this.memoryHighReader[0x1A] = this.memoryReader[0xFF1A] = function (parentObj, address) {
 						return 0x7F | parentObj.memory[0xFF1A];
-					}
+					};
 					break;
 				case 0xFF1B:
 					this.memoryHighReader[0x1B] = this.memoryReader[0xFF1B] = this.memoryReadBAD;
@@ -7669,7 +7672,7 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 				case 0xFF1C:
 					this.memoryHighReader[0x1C] = this.memoryReader[0xFF1C] = function (parentObj, address) {
 						return 0x9F | parentObj.memory[0xFF1C];
-					}
+					};
 					break;
 				case 0xFF1D:
 					this.memoryHighReader[0x1D] = this.memoryReader[0xFF1D] = this.memoryReadBAD;
@@ -7677,7 +7680,7 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 				case 0xFF1E:
 					this.memoryHighReader[0x1E] = this.memoryReader[0xFF1E] = function (parentObj, address) {
 						return 0xBF | parentObj.memory[0xFF1E];
-					}
+					};
 					break;
 				case 0xFF1F:
 				case 0xFF20:
@@ -7691,7 +7694,7 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 				case 0xFF23:
 					this.memoryHighReader[0x23] = this.memoryReader[0xFF23] = function (parentObj, address) {
 						return 0xBF | parentObj.memory[0xFF23];
-					}
+					};
 					break;
 				case 0xFF24:
 				case 0xFF25:
@@ -7702,7 +7705,7 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 					this.memoryHighReader[0x26] = this.memoryReader[0xFF26] = function (parentObj, address) {
 						parentObj.audioJIT();
 						return 0x70 | parentObj.memory[0xFF26];
-					}
+					};
 					break;
 				case 0xFF27:
 				case 0xFF28:
@@ -7733,10 +7736,10 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 				case 0xFF3F:
 					this.memoryReader[index] = function (parentObj, address) {
 						return (parentObj.channel3canPlay) ? parentObj.memory[0xFF00 | (parentObj.channel3lastSampleLookup >> 1)] : parentObj.memory[address];
-					}
+					};
 					this.memoryHighReader[index & 0xFF] = function (parentObj, address) {
 						return (parentObj.channel3canPlay) ? parentObj.memory[0xFF00 | (parentObj.channel3lastSampleLookup >> 1)] : parentObj.memory[0xFF00 | address];
-					}
+					};
 					break;
 				case 0xFF40:
 					this.memoryHighReader[0x40] = this.memoryHighReadNormal;
@@ -7745,22 +7748,22 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 				case 0xFF41:
 					this.memoryHighReader[0x41] = this.memoryReader[0xFF41] = function (parentObj, address) {
 						return 0x80 | parentObj.memory[0xFF41] | parentObj.modeSTAT;
-					}
+					};
 					break;
 				case 0xFF42:
 					this.memoryHighReader[0x42] = this.memoryReader[0xFF42] = function (parentObj, address) {
 						return parentObj.backgroundY;
-					}
+					};
 					break;
 				case 0xFF43:
 					this.memoryHighReader[0x43] = this.memoryReader[0xFF43] = function (parentObj, address) {
 						return parentObj.backgroundX;
-					}
+					};
 					break;
 				case 0xFF44:
 					this.memoryHighReader[0x44] = this.memoryReader[0xFF44] = function (parentObj, address) {
 						return ((parentObj.LCDisOn) ? parentObj.memory[0xFF44] : 0);
-					}
+					};
 					break;
 				case 0xFF45:
 				case 0xFF46:
@@ -7774,7 +7777,7 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 					//WY
 					this.memoryHighReader[0x4A] = this.memoryReader[0xFF4A] = function (parentObj, address) {
 						return parentObj.windowY;
-					}
+					};
 					break;
 				case 0xFF4B:
 					this.memoryHighReader[0x4B] = this.memoryHighReadNormal;
@@ -7793,7 +7796,7 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 				case 0xFF4F:
 					this.memoryHighReader[0x4F] = this.memoryReader[0xFF4F] = function (parentObj, address) {
 						return parentObj.currVRAMBank;
-					}
+					};
 					break;
 				case 0xFF50:
 				case 0xFF51:
@@ -7813,7 +7816,7 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 								parentObj.hdmaRunning = false;
 							}
 							return parentObj.memory[0xFF55];
-						}
+						};
 					}
 					else {
 						this.memoryReader[0xFF55] = this.memoryReadNormal;
@@ -7825,7 +7828,7 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 						this.memoryHighReader[0x56] = this.memoryReader[0xFF56] = function (parentObj, address) {
 							//Return IR "not connected" status:
 							return 0x3C | ((parentObj.memory[0xFF56] >= 0xC0) ? (0x2 | (parentObj.memory[0xFF56] & 0xC1)) : (parentObj.memory[0xFF56] & 0xC3));
-						}
+						};
 					}
 					else {
 						this.memoryReader[0xFF56] = this.memoryReadNormal;
@@ -7862,7 +7865,7 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 					if (this.cGBC) {
 						this.memoryHighReader[0x6C] = this.memoryReader[0xFF6C] = function (parentObj, address) {
 							return 0xFE | parentObj.memory[0xFF6C];
-						}
+						};
 					}
 					else {
 						this.memoryHighReader[0x6C] = this.memoryReader[0xFF6C] = this.memoryReadBAD;
@@ -7878,7 +7881,7 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 						//SVBK
 						this.memoryHighReader[0x70] = this.memoryReader[0xFF70] = function (parentObj, address) {
 							return 0x40 | parentObj.memory[0xFF70];
-						}
+						};
 					}
 					else {
 						this.memoryHighReader[0x70] = this.memoryReader[0xFF70] = this.memoryReadBAD;
@@ -7902,22 +7905,22 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 				case 0xFF75:
 					this.memoryHighReader[0x75] = this.memoryReader[0xFF75] = function (parentObj, address) {
 						return 0x8F | parentObj.memory[0xFF75];
-					}
+					};
 					break;
-                case 0xFF76:
-                    //Undocumented realtime PCM amplitude readback:
-                    this.memoryHighReader[0x76] = this.memoryReader[0xFF76] = function (parentObj, address) {
-                        parentObj.audioJIT();
-                        return (parentObj.channel2envelopeVolume << 4) | parentObj.channel1envelopeVolume;
-                    }
-                    break;
-                case 0xFF77:
-                    //Undocumented realtime PCM amplitude readback:
-                    this.memoryHighReader[0x77] = this.memoryReader[0xFF77] = function (parentObj, address) {
-                        parentObj.audioJIT();
-                        return (parentObj.channel4envelopeVolume << 4) | parentObj.channel3envelopeVolume;
-                    }
-                    break;
+				case 0xFF76:
+					//Undocumented realtime PCM amplitude readback:
+					this.memoryHighReader[0x76] = this.memoryReader[0xFF76] = function (parentObj, address) {
+						parentObj.audioJIT();
+						return (parentObj.channel2envelopeVolume << 4) | parentObj.channel1envelopeVolume;
+					};
+					break;
+				case 0xFF77:
+					//Undocumented realtime PCM amplitude readback:
+					this.memoryHighReader[0x77] = this.memoryReader[0xFF77] = function (parentObj, address) {
+						parentObj.audioJIT();
+						return (parentObj.channel4envelopeVolume << 4) | parentObj.channel3envelopeVolume;
+					};
+					break;
 				case 0xFF78:
 				case 0xFF79:
 				case 0xFF7A:
@@ -7932,7 +7935,7 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 					//IE
 					this.memoryHighReader[0xFF] = this.memoryReader[0xFFFF] = function (parentObj, address) {
 						return parentObj.interruptsEnabled;
-					}
+					};
 					break;
 				default:
 					this.memoryReader[index] = this.memoryReadNormal;
@@ -7943,16 +7946,16 @@ GameBoyCore.prototype.memoryReadJumpCompile = function () {
 			this.memoryReader[index] = this.memoryReadBAD;
 		}
 	}
-}
+};
 GameBoyCore.prototype.memoryReadNormal = function (parentObj, address) {
 	return parentObj.memory[address];
-}
+};
 GameBoyCore.prototype.memoryHighReadNormal = function (parentObj, address) {
 	return parentObj.memory[0xFF00 | address];
-}
+};
 GameBoyCore.prototype.memoryReadROM = function (parentObj, address) {
 	return parentObj.ROM[parentObj.currentROMBank + address];
-}
+};
 GameBoyCore.prototype.memoryReadMBC = function (parentObj, address) {
 	//Switchable RAM
 	if (parentObj.MBCRAMBanksEnabled || settings[10]) {
@@ -7960,7 +7963,7 @@ GameBoyCore.prototype.memoryReadMBC = function (parentObj, address) {
 	}
 	//cout("Reading from disabled RAM.", 1);
 	return 0xFF;
-}
+};
 GameBoyCore.prototype.memoryReadMBC7 = function (parentObj, address) {
 	//Switchable RAM
 	if (parentObj.MBCRAMBanksEnabled || settings[10]) {
@@ -7990,7 +7993,7 @@ GameBoyCore.prototype.memoryReadMBC7 = function (parentObj, address) {
 	}
 	//cout("Reading from disabled RAM.", 1);
 	return 0xFF;
-}
+};
 GameBoyCore.prototype.memoryReadMBC3 = function (parentObj, address) {
 	//Switchable RAM
 	if (parentObj.MBCRAMBanksEnabled || settings[10]) {
@@ -8019,38 +8022,38 @@ GameBoyCore.prototype.memoryReadMBC3 = function (parentObj, address) {
 	}
 	//cout("Reading from invalid or disabled RAM.", 1);
 	return 0xFF;
-}
+};
 GameBoyCore.prototype.memoryReadGBCMemory = function (parentObj, address) {
 	return parentObj.GBCMemory[address + parentObj.gbcRamBankPosition];
-}
+};
 GameBoyCore.prototype.memoryReadOAM = function (parentObj, address) {
-	return (parentObj.modeSTAT > 1) ?  0xFF : parentObj.memory[address];
-}
+	return (parentObj.modeSTAT > 1) ? 0xFF : parentObj.memory[address];
+};
 GameBoyCore.prototype.memoryReadECHOGBCMemory = function (parentObj, address) {
 	return parentObj.GBCMemory[address + parentObj.gbcRamBankPositionECHO];
-}
+};
 GameBoyCore.prototype.memoryReadECHONormal = function (parentObj, address) {
 	return parentObj.memory[address - 0x2000];
-}
+};
 GameBoyCore.prototype.memoryReadBAD = function (parentObj, address) {
 	return 0xFF;
-}
+};
 GameBoyCore.prototype.VRAMDATAReadCGBCPU = function (parentObj, address) {
 	//CPU Side Reading The VRAM (Optimized for GameBoy Color)
 	return (parentObj.modeSTAT > 2) ? 0xFF : ((parentObj.currVRAMBank == 0) ? parentObj.memory[address] : parentObj.VRAM[address & 0x1FFF]);
-}
+};
 GameBoyCore.prototype.VRAMDATAReadDMGCPU = function (parentObj, address) {
 	//CPU Side Reading The VRAM (Optimized for classic GameBoy)
 	return (parentObj.modeSTAT > 2) ? 0xFF : parentObj.memory[address];
-}
+};
 GameBoyCore.prototype.VRAMCHRReadCGBCPU = function (parentObj, address) {
 	//CPU Side Reading the Character Data Map:
 	return (parentObj.modeSTAT > 2) ? 0xFF : parentObj.BGCHRCurrentBank[address & 0x7FF];
-}
+};
 GameBoyCore.prototype.VRAMCHRReadDMGCPU = function (parentObj, address) {
 	//CPU Side Reading the Character Data Map:
 	return (parentObj.modeSTAT > 2) ? 0xFF : parentObj.BGCHRBank1[address & 0x7FF];
-}
+};
 GameBoyCore.prototype.setCurrentMBC1ROMBank = function () {
 	//Read the cartridge ROM data from RAM memory:
 	switch (this.ROMBank1offs) {
@@ -8064,26 +8067,26 @@ GameBoyCore.prototype.setCurrentMBC1ROMBank = function () {
 		default:
 			this.currentROMBank = ((this.ROMBank1offs % this.ROMBankEdge) - 1) << 14;
 	}
-}
+};
 GameBoyCore.prototype.setCurrentMBC2AND3ROMBank = function () {
 	//Read the cartridge ROM data from RAM memory:
 	//Only map bank 0 to bank 1 here (MBC2 is like MBC1, but can only do 16 banks, so only the bank 0 quirk appears for MBC2):
 	this.currentROMBank = Math.max((this.ROMBank1offs % this.ROMBankEdge) - 1, 0) << 14;
-}
+};
 GameBoyCore.prototype.setCurrentMBC5ROMBank = function () {
 	//Read the cartridge ROM data from RAM memory:
 	this.currentROMBank = ((this.ROMBank1offs % this.ROMBankEdge) - 1) << 14;
-}
+};
 //Memory Writing:
 GameBoyCore.prototype.memoryWrite = function (address, data) {
 	//Act as a wrapper for writing by compiled jumps to specific memory writing functions.
 	this.memoryWriter[address](this, address, data);
-}
+};
 //0xFFXX fast path:
 GameBoyCore.prototype.memoryHighWrite = function (address, data) {
 	//Act as a wrapper for writing by compiled jumps to specific memory writing functions.
 	this.memoryHighWriter[address](this, address, data);
-}
+};
 GameBoyCore.prototype.memoryWriteJumpCompile = function () {
 	//Faster in some browsers, since we are doing less conditionals overall by implementing them in advance.
 	for (var index = 0x0000; index <= 0xFFFF; index++) {
@@ -8219,16 +8222,16 @@ GameBoyCore.prototype.memoryWriteJumpCompile = function () {
 		}
 	}
 	this.registerWriteJumpCompile();				//Compile the I/O write functions separately...
-}
+};
 GameBoyCore.prototype.MBCWriteEnable = function (parentObj, address, data) {
 	//MBC RAM Bank Enable/Disable:
 	parentObj.MBCRAMBanksEnabled = ((data & 0x0F) == 0x0A);	//If lower nibble is 0x0A, then enable, otherwise disable.
-}
+};
 GameBoyCore.prototype.MBC1WriteROMBank = function (parentObj, address, data) {
 	//MBC1 ROM bank switching:
 	parentObj.ROMBank1offs = (parentObj.ROMBank1offs & 0x60) | (data & 0x1F);
 	parentObj.setCurrentMBC1ROMBank();
-}
+};
 GameBoyCore.prototype.MBC1WriteRAMBank = function (parentObj, address, data) {
 	//MBC1 RAM bank switching
 	if (parentObj.MBC1Mode) {
@@ -8241,7 +8244,7 @@ GameBoyCore.prototype.MBC1WriteRAMBank = function (parentObj, address, data) {
 		parentObj.ROMBank1offs = ((data & 0x03) << 5) | (parentObj.ROMBank1offs & 0x1F);
 		parentObj.setCurrentMBC1ROMBank();
 	}
-}
+};
 GameBoyCore.prototype.MBC1WriteType = function (parentObj, address, data) {
 	//MBC1 mode setting:
 	parentObj.MBC1Mode = ((data & 0x1) == 0x1);
@@ -8253,24 +8256,24 @@ GameBoyCore.prototype.MBC1WriteType = function (parentObj, address, data) {
 		parentObj.currMBCRAMBank = 0;
 		parentObj.currMBCRAMBankPosition = -0xA000;
 	}
-}
+};
 GameBoyCore.prototype.MBC2WriteROMBank = function (parentObj, address, data) {
 	//MBC2 ROM bank switching:
 	parentObj.ROMBank1offs = data & 0x0F;
 	parentObj.setCurrentMBC2AND3ROMBank();
-}
+};
 GameBoyCore.prototype.MBC3WriteROMBank = function (parentObj, address, data) {
 	//MBC3 ROM bank switching:
 	parentObj.ROMBank1offs = data & 0x7F;
 	parentObj.setCurrentMBC2AND3ROMBank();
-}
+};
 GameBoyCore.prototype.MBC3WriteRAMBank = function (parentObj, address, data) {
 	parentObj.currMBCRAMBank = data;
 	if (data < 4) {
 		//MBC3 RAM bank switching
 		parentObj.currMBCRAMBankPosition = (parentObj.currMBCRAMBank << 13) - 0xA000;
 	}
-}
+};
 GameBoyCore.prototype.MBC3WriteRTCLatch = function (parentObj, address, data) {
 	if (data == 0) {
 		parentObj.RTCisLatched = false;
@@ -8284,47 +8287,47 @@ GameBoyCore.prototype.MBC3WriteRTCLatch = function (parentObj, address, data) {
 		parentObj.latchedLDays = (parentObj.RTCDays & 0xFF);
 		parentObj.latchedHDays = parentObj.RTCDays >> 8;
 	}
-}
+};
 GameBoyCore.prototype.MBC5WriteROMBankLow = function (parentObj, address, data) {
 	//MBC5 ROM bank switching:
 	parentObj.ROMBank1offs = (parentObj.ROMBank1offs & 0x100) | data;
 	parentObj.setCurrentMBC5ROMBank();
-}
+};
 GameBoyCore.prototype.MBC5WriteROMBankHigh = function (parentObj, address, data) {
 	//MBC5 ROM bank switching (by least significant bit):
-	parentObj.ROMBank1offs  = ((data & 0x01) << 8) | (parentObj.ROMBank1offs & 0xFF);
+	parentObj.ROMBank1offs = ((data & 0x01) << 8) | (parentObj.ROMBank1offs & 0xFF);
 	parentObj.setCurrentMBC5ROMBank();
-}
+};
 GameBoyCore.prototype.MBC5WriteRAMBank = function (parentObj, address, data) {
 	//MBC5 RAM bank switching
 	parentObj.currMBCRAMBank = data & 0xF;
 	parentObj.currMBCRAMBankPosition = (parentObj.currMBCRAMBank << 13) - 0xA000;
-}
+};
 GameBoyCore.prototype.RUMBLEWriteRAMBank = function (parentObj, address, data) {
 	//MBC5 RAM bank switching
 	//Like MBC5, but bit 3 of the lower nibble is used for rumbling and bit 2 is ignored.
 	parentObj.currMBCRAMBank = data & 0x03;
 	parentObj.currMBCRAMBankPosition = (parentObj.currMBCRAMBank << 13) - 0xA000;
-}
+};
 GameBoyCore.prototype.HuC3WriteRAMBank = function (parentObj, address, data) {
 	//HuC3 RAM bank switching
 	parentObj.currMBCRAMBank = data & 0x03;
 	parentObj.currMBCRAMBankPosition = (parentObj.currMBCRAMBank << 13) - 0xA000;
-}
+};
 GameBoyCore.prototype.cartIgnoreWrite = function (parentObj, address, data) {
 	//We might have encountered illegal RAM writing or such, so just do nothing...
-}
+};
 GameBoyCore.prototype.memoryWriteNormal = function (parentObj, address, data) {
 	parentObj.memory[address] = data;
-}
+};
 GameBoyCore.prototype.memoryHighWriteNormal = function (parentObj, address, data) {
 	parentObj.memory[0xFF00 | address] = data;
-}
+};
 GameBoyCore.prototype.memoryWriteMBCRAM = function (parentObj, address, data) {
 	if (parentObj.MBCRAMBanksEnabled || settings[10]) {
 		parentObj.MBCRam[address + parentObj.currMBCRAMBankPosition] = data;
 	}
-}
+};
 GameBoyCore.prototype.memoryWriteMBC3RAM = function (parentObj, address, data) {
 	if (parentObj.MBCRAMBanksEnabled || settings[10]) {
 		switch (parentObj.currMBCRAMBank) {
@@ -8370,10 +8373,10 @@ GameBoyCore.prototype.memoryWriteMBC3RAM = function (parentObj, address, data) {
 				cout("Invalid MBC3 bank address selected: " + parentObj.currMBCRAMBank, 0);
 		}
 	}
-}
+};
 GameBoyCore.prototype.memoryWriteGBCRAM = function (parentObj, address, data) {
 	parentObj.GBCMemory[address + parentObj.gbcRamBankPosition] = data;
-}
+};
 GameBoyCore.prototype.memoryWriteOAMRAM = function (parentObj, address, data) {
 	if (parentObj.modeSTAT < 2) {		//OAM RAM cannot be written to in mode 2 & 3
 		if (parentObj.memory[address] != data) {
@@ -8381,13 +8384,13 @@ GameBoyCore.prototype.memoryWriteOAMRAM = function (parentObj, address, data) {
 			parentObj.memory[address] = data;
 		}
 	}
-}
+};
 GameBoyCore.prototype.memoryWriteECHOGBCRAM = function (parentObj, address, data) {
 	parentObj.GBCMemory[address + parentObj.gbcRamBankPositionECHO] = data;
-}
+};
 GameBoyCore.prototype.memoryWriteECHONormal = function (parentObj, address, data) {
 	parentObj.memory[address - 0x2000] = data;
-}
+};
 GameBoyCore.prototype.VRAMGBDATAWrite = function (parentObj, address, data) {
 	if (parentObj.modeSTAT < 3) {	//VRAM cannot be written to during mode 3
 		if (parentObj.memory[address] != data) {
@@ -8397,7 +8400,7 @@ GameBoyCore.prototype.VRAMGBDATAWrite = function (parentObj, address, data) {
 			parentObj.generateGBOAMTileLine(address);
 		}
 	}
-}
+};
 GameBoyCore.prototype.VRAMGBDATAUpperWrite = function (parentObj, address, data) {
 	if (parentObj.modeSTAT < 3) {	//VRAM cannot be written to during mode 3
 		if (parentObj.memory[address] != data) {
@@ -8407,7 +8410,7 @@ GameBoyCore.prototype.VRAMGBDATAUpperWrite = function (parentObj, address, data)
 			parentObj.generateGBTileLine(address);
 		}
 	}
-}
+};
 GameBoyCore.prototype.VRAMGBCDATAWrite = function (parentObj, address, data) {
 	if (parentObj.modeSTAT < 3) {	//VRAM cannot be written to during mode 3
 		if (parentObj.currVRAMBank == 0) {
@@ -8428,7 +8431,7 @@ GameBoyCore.prototype.VRAMGBCDATAWrite = function (parentObj, address, data) {
 			}
 		}
 	}
-}
+};
 GameBoyCore.prototype.VRAMGBCHRMAPWrite = function (parentObj, address, data) {
 	if (parentObj.modeSTAT < 3) {	//VRAM cannot be written to during mode 3
 		address &= 0x7FF;
@@ -8438,7 +8441,7 @@ GameBoyCore.prototype.VRAMGBCHRMAPWrite = function (parentObj, address, data) {
 			parentObj.BGCHRBank1[address] = data;
 		}
 	}
-}
+};
 GameBoyCore.prototype.VRAMGBCCHRMAPWrite = function (parentObj, address, data) {
 	if (parentObj.modeSTAT < 3) {	//VRAM cannot be written to during mode 3
 		address &= 0x7FF;
@@ -8448,7 +8451,7 @@ GameBoyCore.prototype.VRAMGBCCHRMAPWrite = function (parentObj, address, data) {
 			parentObj.BGCHRCurrentBank[address] = data;
 		}
 	}
-}
+};
 GameBoyCore.prototype.DMAWrite = function (tilesToTransfer) {
 	if (!this.halt) {
 		//Clock the CPU for the DMA transfer (CPU is halted during the transfer):
@@ -8564,19 +8567,19 @@ GameBoyCore.prototype.DMAWrite = function (tilesToTransfer) {
 	memory[0xFF52] = source & 0xF0;
 	memory[0xFF53] = destination >> 8;
 	memory[0xFF54] = destination & 0xF0;
-}
+};
 GameBoyCore.prototype.registerWriteJumpCompile = function () {
 	//I/O Registers (GB + GBC):
 	//JoyPad
 	this.memoryHighWriter[0] = this.memoryWriter[0xFF00] = function (parentObj, address, data) {
 		parentObj.memory[0xFF00] = (data & 0x30) | ((((data & 0x20) == 0) ? (parentObj.JoyPad >> 4) : 0xF) & (((data & 0x10) == 0) ? (parentObj.JoyPad & 0xF) : 0xF));
-	}
+	};
 	//SB (Serial Transfer Data)
 	this.memoryHighWriter[0x1] = this.memoryWriter[0xFF01] = function (parentObj, address, data) {
 		if (parentObj.memory[0xFF02] < 0x80) {	//Cannot write while a serial transfer is active.
 			parentObj.memory[0xFF01] = data;
 		}
-	}
+	};
 	//SC (Serial Transfer Control):
 	this.memoryHighWriter[0x2] = this.memoryHighWriteNormal;
 	this.memoryWriter[0xFF02] = this.memoryWriteNormal;
@@ -8586,21 +8589,21 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 	this.memoryHighWriter[0x4] = this.memoryWriter[0xFF04] = function (parentObj, address, data) {
 		parentObj.DIVTicks &= 0xFF;	//Update DIV for realignment.
 		parentObj.memory[0xFF04] = 0;
-	}
+	};
 	//TIMA
 	this.memoryHighWriter[0x5] = this.memoryWriter[0xFF05] = function (parentObj, address, data) {
 		parentObj.memory[0xFF05] = data;
-	}
+	};
 	//TMA
 	this.memoryHighWriter[0x6] = this.memoryWriter[0xFF06] = function (parentObj, address, data) {
 		parentObj.memory[0xFF06] = data;
-	}
+	};
 	//TAC
 	this.memoryHighWriter[0x7] = this.memoryWriter[0xFF07] = function (parentObj, address, data) {
 		parentObj.memory[0xFF07] = data & 0x07;
 		parentObj.TIMAEnabled = (data & 0x04) == 0x04;
 		parentObj.TACClocker = Math.pow(4, ((data & 0x3) != 0) ? (data & 0x3) : 4) << 2;	//TODO: Find a way to not make a conditional in here...
-	}
+	};
 	//Unmapped I/O:
 	this.memoryHighWriter[0x8] = this.memoryWriter[0xFF08] = this.cartIgnoreWrite;
 	this.memoryHighWriter[0x9] = this.memoryWriter[0xFF09] = this.cartIgnoreWrite;
@@ -8613,7 +8616,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 	this.memoryHighWriter[0xF] = this.memoryWriter[0xFF0F] = function (parentObj, address, data) {
 		parentObj.interruptsRequested = data;
 		parentObj.checkIRQMatching();
-	}
+	};
 	//NR10:
 	this.memoryHighWriter[0x10] = this.memoryWriter[0xFF10] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled) {
@@ -8629,7 +8632,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.memory[0xFF10] = data;
 			parentObj.channel1EnableCheck();
 		}
-	}
+	};
 	//NR11:
 	this.memoryHighWriter[0x11] = this.memoryWriter[0xFF11] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled || !parentObj.cGBC) {
@@ -8644,7 +8647,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.memory[0xFF11] = data;
 			parentObj.channel1EnableCheck();
 		}
-	}
+	};
 	//NR12:
 	this.memoryHighWriter[0x12] = this.memoryWriter[0xFF12] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled) {
@@ -8671,7 +8674,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.memory[0xFF12] = data;
 			parentObj.channel1VolumeEnableCheck();
 		}
-	}
+	};
 	//NR13:
 	this.memoryHighWriter[0x13] = this.memoryWriter[0xFF13] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled) {
@@ -8679,7 +8682,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.channel1frequency = (parentObj.channel1frequency & 0x700) | data;
 			parentObj.channel1FrequencyTracker = (0x800 - parentObj.channel1frequency) << 2;
 		}
-	}
+	};
 	//NR14:
 	this.memoryHighWriter[0x14] = this.memoryWriter[0xFF14] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled) {
@@ -8717,7 +8720,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.channel1EnableCheck();
 			parentObj.memory[0xFF14] = data;
 		}
-	}
+	};
 	//NR20 (Unused I/O):
 	this.memoryHighWriter[0x15] = this.memoryWriter[0xFF15] = this.cartIgnoreWrite;
 	//NR21:
@@ -8734,7 +8737,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.memory[0xFF16] = data;
 			parentObj.channel2EnableCheck();
 		}
-	}
+	};
 	//NR22:
 	this.memoryHighWriter[0x17] = this.memoryWriter[0xFF17] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled) {
@@ -8761,7 +8764,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.memory[0xFF17] = data;
 			parentObj.channel2VolumeEnableCheck();
 		}
-	}
+	};
 	//NR23:
 	this.memoryHighWriter[0x18] = this.memoryWriter[0xFF18] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled) {
@@ -8769,7 +8772,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.channel2frequency = (parentObj.channel2frequency & 0x700) | data;
 			parentObj.channel2FrequencyTracker = (0x800 - parentObj.channel2frequency) << 2;
 		}
-	}
+	};
 	//NR24:
 	this.memoryHighWriter[0x19] = this.memoryWriter[0xFF19] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled) {
@@ -8793,7 +8796,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.memory[0xFF19] = data;
 			parentObj.channel2EnableCheck();
 		}
-	}
+	};
 	//NR30:
 	this.memoryHighWriter[0x1A] = this.memoryWriter[0xFF1A] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled) {
@@ -8809,7 +8812,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.memory[0xFF1A] = data;
 			//parentObj.channel3EnableCheck();
 		}
-	}
+	};
 	//NR31:
 	this.memoryHighWriter[0x1B] = this.memoryWriter[0xFF1B] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled || !parentObj.cGBC) {
@@ -8819,7 +8822,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.channel3totalLength = 0x100 - data;
 			parentObj.channel3EnableCheck();
 		}
-	}
+	};
 	//NR32:
 	this.memoryHighWriter[0x1C] = this.memoryWriter[0xFF1C] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled) {
@@ -8828,7 +8831,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.memory[0xFF1C] = data;
 			parentObj.channel3patternType = (data == 0) ? 4 : ((data >> 5) - 1);
 		}
-	}
+	};
 	//NR33:
 	this.memoryHighWriter[0x1D] = this.memoryWriter[0xFF1D] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled) {
@@ -8836,7 +8839,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.channel3frequency = (parentObj.channel3frequency & 0x700) | data;
 			parentObj.channel3FrequencyPeriod = (0x800 - parentObj.channel3frequency) << 1;
 		}
-	}
+	};
 	//NR34:
 	this.memoryHighWriter[0x1E] = this.memoryWriter[0xFF1E] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled) {
@@ -8856,7 +8859,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.memory[0xFF1E] = data;
 			parentObj.channel3EnableCheck();
 		}
-	}
+	};
 	//NR40 (Unused I/O):
 	this.memoryHighWriter[0x1F] = this.memoryWriter[0xFF1F] = this.cartIgnoreWrite;
 	//NR41:
@@ -8868,7 +8871,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.channel4totalLength = 0x40 - (data & 0x3F);
 			parentObj.channel4EnableCheck();
 		}
-	}
+	};
 	//NR42:
 	this.memoryHighWriter[0x21] = this.memoryWriter[0xFF21] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled) {
@@ -8896,7 +8899,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.channel4UpdateCache();
 			parentObj.channel4VolumeEnableCheck();
 		}
-	}
+	};
 	//NR43:
 	this.memoryHighWriter[0x22] = this.memoryWriter[0xFF22] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled) {
@@ -8913,7 +8916,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.memory[0xFF22] = data;
 			parentObj.channel4UpdateCache();
 		}
-	}
+	};
 	//NR44:
 	this.memoryHighWriter[0x23] = this.memoryWriter[0xFF23] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled) {
@@ -8934,7 +8937,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			}
 			parentObj.channel4EnableCheck();
 		}
-	}
+	};
 	//NR50:
 	this.memoryHighWriter[0x24] = this.memoryWriter[0xFF24] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled && parentObj.memory[0xFF24] != data) {
@@ -8944,7 +8947,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.VinRightChannelMasterVolume = (data & 0x07) + 1;
 			parentObj.mixerOutputLevelCache();
 		}
-	}
+	};
 	//NR51:
 	this.memoryHighWriter[0x25] = this.memoryWriter[0xFF25] = function (parentObj, address, data) {
 		if (parentObj.soundMasterEnabled && parentObj.memory[0xFF25] != data) {
@@ -8963,7 +8966,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.channel3OutputLevelCache();
 			parentObj.channel4OutputLevelCache();
 		}
-	}
+	};
 	//NR52:
 	this.memoryHighWriter[0x26] = this.memoryWriter[0xFF26] = function (parentObj, address, data) {
 		parentObj.audioJIT();
@@ -8980,7 +8983,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 				parentObj.memoryWriter[index](parentObj, index, 0);
 			}
 		}
-	}
+	};
 	//0xFF27 to 0xFF2F don't do anything...
 	this.memoryHighWriter[0x27] = this.memoryWriter[0xFF27] = this.cartIgnoreWrite;
 	this.memoryHighWriter[0x28] = this.memoryWriter[0xFF28] = this.cartIgnoreWrite;
@@ -8994,66 +8997,66 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 	//WAVE PCM RAM:
 	this.memoryHighWriter[0x30] = this.memoryWriter[0xFF30] = function (parentObj, address, data) {
 		parentObj.channel3WriteRAM(0, data);
-	}
+	};
 	this.memoryHighWriter[0x31] = this.memoryWriter[0xFF31] = function (parentObj, address, data) {
 		parentObj.channel3WriteRAM(0x1, data);
-	}
+	};
 	this.memoryHighWriter[0x32] = this.memoryWriter[0xFF32] = function (parentObj, address, data) {
 		parentObj.channel3WriteRAM(0x2, data);
-	}
+	};
 	this.memoryHighWriter[0x33] = this.memoryWriter[0xFF33] = function (parentObj, address, data) {
 		parentObj.channel3WriteRAM(0x3, data);
-	}
+	};
 	this.memoryHighWriter[0x34] = this.memoryWriter[0xFF34] = function (parentObj, address, data) {
 		parentObj.channel3WriteRAM(0x4, data);
-	}
+	};
 	this.memoryHighWriter[0x35] = this.memoryWriter[0xFF35] = function (parentObj, address, data) {
 		parentObj.channel3WriteRAM(0x5, data);
-	}
+	};
 	this.memoryHighWriter[0x36] = this.memoryWriter[0xFF36] = function (parentObj, address, data) {
 		parentObj.channel3WriteRAM(0x6, data);
-	}
+	};
 	this.memoryHighWriter[0x37] = this.memoryWriter[0xFF37] = function (parentObj, address, data) {
 		parentObj.channel3WriteRAM(0x7, data);
-	}
+	};
 	this.memoryHighWriter[0x38] = this.memoryWriter[0xFF38] = function (parentObj, address, data) {
 		parentObj.channel3WriteRAM(0x8, data);
-	}
+	};
 	this.memoryHighWriter[0x39] = this.memoryWriter[0xFF39] = function (parentObj, address, data) {
 		parentObj.channel3WriteRAM(0x9, data);
-	}
+	};
 	this.memoryHighWriter[0x3A] = this.memoryWriter[0xFF3A] = function (parentObj, address, data) {
 		parentObj.channel3WriteRAM(0xA, data);
-	}
+	};
 	this.memoryHighWriter[0x3B] = this.memoryWriter[0xFF3B] = function (parentObj, address, data) {
 		parentObj.channel3WriteRAM(0xB, data);
-	}
+	};
 	this.memoryHighWriter[0x3C] = this.memoryWriter[0xFF3C] = function (parentObj, address, data) {
 		parentObj.channel3WriteRAM(0xC, data);
-	}
+	};
 	this.memoryHighWriter[0x3D] = this.memoryWriter[0xFF3D] = function (parentObj, address, data) {
 		parentObj.channel3WriteRAM(0xD, data);
-	}
+	};
 	this.memoryHighWriter[0x3E] = this.memoryWriter[0xFF3E] = function (parentObj, address, data) {
 		parentObj.channel3WriteRAM(0xE, data);
-	}
+	};
 	this.memoryHighWriter[0x3F] = this.memoryWriter[0xFF3F] = function (parentObj, address, data) {
 		parentObj.channel3WriteRAM(0xF, data);
-	}
+	};
 	//SCY
 	this.memoryHighWriter[0x42] = this.memoryWriter[0xFF42] = function (parentObj, address, data) {
 		if (parentObj.backgroundY != data) {
 			parentObj.midScanLineJIT();
 			parentObj.backgroundY = data;
 		}
-	}
+	};
 	//SCX
 	this.memoryHighWriter[0x43] = this.memoryWriter[0xFF43] = function (parentObj, address, data) {
 		if (parentObj.backgroundX != data) {
 			parentObj.midScanLineJIT();
 			parentObj.backgroundX = data;
 		}
-	}
+	};
 	//LY
 	this.memoryHighWriter[0x44] = this.memoryWriter[0xFF44] = function (parentObj, address, data) {
 		//Read Only:
@@ -9063,7 +9066,7 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.midScanlineOffset = -1;
 			parentObj.totalLinesPassed = parentObj.currentX = parentObj.queuedScanLines = parentObj.lastUnrenderedLine = parentObj.LCDTicks = parentObj.STATTracker = parentObj.actualScanLine = parentObj.memory[0xFF44] = 0;
 		}
-	}
+	};
 	//LYC
 	this.memoryHighWriter[0x45] = this.memoryWriter[0xFF45] = function (parentObj, address, data) {
 		if (parentObj.memory[0xFF45] != data) {
@@ -9072,14 +9075,14 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 				parentObj.matchLYC();	//Get the compare of the first scan line.
 			}
 		}
-	}
+	};
 	//WY
 	this.memoryHighWriter[0x4A] = this.memoryWriter[0xFF4A] = function (parentObj, address, data) {
 		if (parentObj.windowY != data) {
 			parentObj.midScanLineJIT();
 			parentObj.windowY = data;
 		}
-	}
+	};
 	//WX
 	this.memoryHighWriter[0x4B] = this.memoryWriter[0xFF4B] = function (parentObj, address, data) {
 		if (parentObj.memory[0xFF4B] != data) {
@@ -9087,26 +9090,26 @@ GameBoyCore.prototype.registerWriteJumpCompile = function () {
 			parentObj.memory[0xFF4B] = data;
 			parentObj.windowX = data - 7;
 		}
-	}
+	};
 	this.memoryHighWriter[0x72] = this.memoryWriter[0xFF72] = function (parentObj, address, data) {
 		parentObj.memory[0xFF72] = data;
-	}
+	};
 	this.memoryHighWriter[0x73] = this.memoryWriter[0xFF73] = function (parentObj, address, data) {
 		parentObj.memory[0xFF73] = data;
-	}
+	};
 	this.memoryHighWriter[0x75] = this.memoryWriter[0xFF75] = function (parentObj, address, data) {
 		parentObj.memory[0xFF75] = data;
-	}
+	};
 	this.memoryHighWriter[0x76] = this.memoryWriter[0xFF76] = this.cartIgnoreWrite;
 	this.memoryHighWriter[0x77] = this.memoryWriter[0xFF77] = this.cartIgnoreWrite;
 	//IE (Interrupt Enable)
 	this.memoryHighWriter[0xFF] = this.memoryWriter[0xFFFF] = function (parentObj, address, data) {
 		parentObj.interruptsEnabled = data;
 		parentObj.checkIRQMatching();
-	}
+	};
 	this.recompileModelSpecificIOWriteHandling();
 	this.recompileBootIOWriteHandling();
-}
+};
 GameBoyCore.prototype.recompileModelSpecificIOWriteHandling = function () {
 	if (this.cGBC) {
 		//GameBoy Color Specific I/O:
@@ -9123,7 +9126,7 @@ GameBoyCore.prototype.recompileModelSpecificIOWriteHandling = function () {
 				parentObj.memory[0xFF02] = data;
 				parentObj.serialShiftTimer = parentObj.serialShiftTimerAllocated = parentObj.serialTimer = 0;	//Zero the timers, since we're emulating as if nothing is connected.
 			}
-		}
+		};
 		this.memoryHighWriter[0x40] = this.memoryWriter[0xFF40] = function (parentObj, address, data) {
 			if (parentObj.memory[0xFF40] != data) {
 				parentObj.midScanLineJIT();
@@ -9156,14 +9159,14 @@ GameBoyCore.prototype.recompileModelSpecificIOWriteHandling = function () {
 				parentObj.priorityFlaggingPathRebuild();	//Special case the priority flagging as an optimization.
 				parentObj.memory[0xFF40] = data;
 			}
-		}
+		};
 		this.memoryHighWriter[0x41] = this.memoryWriter[0xFF41] = function (parentObj, address, data) {
 			parentObj.LYCMatchTriggerSTAT = ((data & 0x40) == 0x40);
 			parentObj.mode2TriggerSTAT = ((data & 0x20) == 0x20);
 			parentObj.mode1TriggerSTAT = ((data & 0x10) == 0x10);
 			parentObj.mode0TriggerSTAT = ((data & 0x08) == 0x08);
 			parentObj.memory[0xFF41] = data & 0x78;
-		}
+		};
 		this.memoryHighWriter[0x46] = this.memoryWriter[0xFF46] = function (parentObj, address, data) {
 			parentObj.memory[0xFF46] = data;
 			if (data < 0xE0) {
@@ -9193,11 +9196,11 @@ GameBoyCore.prototype.recompileModelSpecificIOWriteHandling = function () {
 				}
 				parentObj.modeSTAT = stat;
 			}
-		}
+		};
 		//KEY1
 		this.memoryHighWriter[0x4D] = this.memoryWriter[0xFF4D] = function (parentObj, address, data) {
 			parentObj.memory[0xFF4D] = (data & 0x7F) | (parentObj.memory[0xFF4D] & 0x80);
-		}
+		};
 		this.memoryHighWriter[0x4F] = this.memoryWriter[0xFF4F] = function (parentObj, address, data) {
 			parentObj.currVRAMBank = data & 0x01;
 			if (parentObj.currVRAMBank > 0) {
@@ -9207,27 +9210,27 @@ GameBoyCore.prototype.recompileModelSpecificIOWriteHandling = function () {
 				parentObj.BGCHRCurrentBank = parentObj.BGCHRBank1;
 			}
 			//Only writable by GBC.
-		}
+		};
 		this.memoryHighWriter[0x51] = this.memoryWriter[0xFF51] = function (parentObj, address, data) {
 			if (!parentObj.hdmaRunning) {
 				parentObj.memory[0xFF51] = data;
 			}
-		}
+		};
 		this.memoryHighWriter[0x52] = this.memoryWriter[0xFF52] = function (parentObj, address, data) {
 			if (!parentObj.hdmaRunning) {
 				parentObj.memory[0xFF52] = data & 0xF0;
 			}
-		}
+		};
 		this.memoryHighWriter[0x53] = this.memoryWriter[0xFF53] = function (parentObj, address, data) {
 			if (!parentObj.hdmaRunning) {
 				parentObj.memory[0xFF53] = data & 0x1F;
 			}
-		}
+		};
 		this.memoryHighWriter[0x54] = this.memoryWriter[0xFF54] = function (parentObj, address, data) {
 			if (!parentObj.hdmaRunning) {
 				parentObj.memory[0xFF54] = data & 0xF0;
 			}
-		}
+		};
 		this.memoryHighWriter[0x55] = this.memoryWriter[0xFF55] = function (parentObj, address, data) {
 			if (!parentObj.hdmaRunning) {
 				if ((data & 0x80) == 0) {
@@ -9249,11 +9252,11 @@ GameBoyCore.prototype.recompileModelSpecificIOWriteHandling = function () {
 			else {
 				parentObj.memory[0xFF55] = data & 0x7F;
 			}
-		}
+		};
 		this.memoryHighWriter[0x68] = this.memoryWriter[0xFF68] = function (parentObj, address, data) {
 			parentObj.memory[0xFF69] = parentObj.gbcBGRawPalette[data & 0x3F];
 			parentObj.memory[0xFF68] = data;
-		}
+		};
 		this.memoryHighWriter[0x69] = this.memoryWriter[0xFF69] = function (parentObj, address, data) {
 			parentObj.updateGBCBGPalette(parentObj.memory[0xFF68] & 0x3F, data);
 			if (parentObj.memory[0xFF68] > 0x7F) { // high bit = autoincrement
@@ -9264,11 +9267,11 @@ GameBoyCore.prototype.recompileModelSpecificIOWriteHandling = function () {
 			else {
 				parentObj.memory[0xFF69] = data;
 			}
-		}
+		};
 		this.memoryHighWriter[0x6A] = this.memoryWriter[0xFF6A] = function (parentObj, address, data) {
 			parentObj.memory[0xFF6B] = parentObj.gbcOBJRawPalette[data & 0x3F];
 			parentObj.memory[0xFF6A] = data;
-		}
+		};
 		this.memoryHighWriter[0x6B] = this.memoryWriter[0xFF6B] = function (parentObj, address, data) {
 			parentObj.updateGBCOBJPalette(parentObj.memory[0xFF6A] & 0x3F, data);
 			if (parentObj.memory[0xFF6A] > 0x7F) { // high bit = autoincrement
@@ -9279,7 +9282,7 @@ GameBoyCore.prototype.recompileModelSpecificIOWriteHandling = function () {
 			else {
 				parentObj.memory[0xFF6B] = data;
 			}
-		}
+		};
 		//SVBK
 		this.memoryHighWriter[0x70] = this.memoryWriter[0xFF70] = function (parentObj, address, data) {
 			var addressCheck = (parentObj.memory[0xFF51] << 8) | parentObj.memory[0xFF52];	//Cannot change the RAM bank while WRAM is the source of a running HDMA.
@@ -9289,10 +9292,10 @@ GameBoyCore.prototype.recompileModelSpecificIOWriteHandling = function () {
 				parentObj.gbcRamBankPositionECHO = parentObj.gbcRamBankPosition - 0x2000;
 			}
 			parentObj.memory[0xFF70] = data;	//Bit 6 cannot be written to.
-		}
+		};
 		this.memoryHighWriter[0x74] = this.memoryWriter[0xFF74] = function (parentObj, address, data) {
 			parentObj.memory[0xFF74] = data;
-		}
+		};
 	}
 	else {
 		//Fill in the GameBoy Color I/O registers as normal RAM for GameBoy compatibility:
@@ -9309,7 +9312,7 @@ GameBoyCore.prototype.recompileModelSpecificIOWriteHandling = function () {
 				parentObj.memory[0xFF02] = data;
 				parentObj.serialShiftTimer = parentObj.serialShiftTimerAllocated = parentObj.serialTimer = 0;	//Zero the timers, since we're emulating as if nothing is connected.
 			}
-		}
+		};
 		this.memoryHighWriter[0x40] = this.memoryWriter[0xFF40] = function (parentObj, address, data) {
 			if (parentObj.memory[0xFF40] != data) {
 				parentObj.midScanLineJIT();
@@ -9341,7 +9344,7 @@ GameBoyCore.prototype.recompileModelSpecificIOWriteHandling = function () {
 				parentObj.bgEnabled = ((data & 0x01) == 0x01);
 				parentObj.memory[0xFF40] = data;
 			}
-		}
+		};
 		this.memoryHighWriter[0x41] = this.memoryWriter[0xFF41] = function (parentObj, address, data) {
 			parentObj.LYCMatchTriggerSTAT = ((data & 0x40) == 0x40);
 			parentObj.mode2TriggerSTAT = ((data & 0x20) == 0x20);
@@ -9352,7 +9355,7 @@ GameBoyCore.prototype.recompileModelSpecificIOWriteHandling = function () {
 				parentObj.interruptsRequested |= 0x2;
 				parentObj.checkIRQMatching();
 			}
-		}
+		};
 		this.memoryHighWriter[0x46] = this.memoryWriter[0xFF46] = function (parentObj, address, data) {
 			parentObj.memory[0xFF46] = data;
 			if (data > 0x7F && data < 0xE0) {	//DMG cannot DMA from the ROM banks.
@@ -9382,31 +9385,31 @@ GameBoyCore.prototype.recompileModelSpecificIOWriteHandling = function () {
 				}
 				parentObj.modeSTAT = stat;
 			}
-		}
+		};
 		this.memoryHighWriter[0x47] = this.memoryWriter[0xFF47] = function (parentObj, address, data) {
 			if (parentObj.memory[0xFF47] != data) {
 				parentObj.midScanLineJIT();
 				parentObj.updateGBBGPalette(data);
 				parentObj.memory[0xFF47] = data;
 			}
-		}
+		};
 		this.memoryHighWriter[0x48] = this.memoryWriter[0xFF48] = function (parentObj, address, data) {
 			if (parentObj.memory[0xFF48] != data) {
 				parentObj.midScanLineJIT();
 				parentObj.updateGBOBJPalette(0, data);
 				parentObj.memory[0xFF48] = data;
 			}
-		}
+		};
 		this.memoryHighWriter[0x49] = this.memoryWriter[0xFF49] = function (parentObj, address, data) {
 			if (parentObj.memory[0xFF49] != data) {
 				parentObj.midScanLineJIT();
 				parentObj.updateGBOBJPalette(4, data);
 				parentObj.memory[0xFF49] = data;
 			}
-		}
+		};
 		this.memoryHighWriter[0x4D] = this.memoryWriter[0xFF4D] = function (parentObj, address, data) {
 			parentObj.memory[0xFF4D] = data;
-		}
+		};
 		this.memoryHighWriter[0x4F] = this.memoryWriter[0xFF4F] = this.cartIgnoreWrite;	//Not writable in DMG mode.
 		this.memoryHighWriter[0x55] = this.memoryWriter[0xFF55] = this.cartIgnoreWrite;
 		this.memoryHighWriter[0x68] = this.memoryWriter[0xFF68] = this.cartIgnoreWrite;
@@ -9417,7 +9420,7 @@ GameBoyCore.prototype.recompileModelSpecificIOWriteHandling = function () {
 		this.memoryHighWriter[0x70] = this.memoryWriter[0xFF70] = this.cartIgnoreWrite;
 		this.memoryHighWriter[0x74] = this.memoryWriter[0xFF74] = this.cartIgnoreWrite;
 	}
-}
+};
 GameBoyCore.prototype.recompileBootIOWriteHandling = function () {
 	//Boot I/O Registers:
 	if (this.inBootstrap) {
@@ -9426,7 +9429,7 @@ GameBoyCore.prototype.recompileBootIOWriteHandling = function () {
 			parentObj.inBootstrap = false;
 			parentObj.disableBootROM();			//Fill in the boot ROM ranges with ROM  bank 0 ROM ranges
 			parentObj.memory[0xFF50] = data;	//Bits are sustained in memory?
-		}
+		};
 		if (this.cGBC) {
 			this.memoryHighWriter[0x6C] = this.memoryWriter[0xFF6C] = function (parentObj, address, data) {
 				if (parentObj.inBootstrap) {
@@ -9439,14 +9442,14 @@ GameBoyCore.prototype.recompileBootIOWriteHandling = function () {
 					cout("Booted to GBC Mode: " + parentObj.cGBC, 0);
 				}
 				parentObj.memory[0xFF6C] = data;
-			}
+			};
 		}
 	}
 	else {
 		//Lockout the ROMs from accessing the BOOT ROM control register:
 		this.memoryHighWriter[0x50] = this.memoryWriter[0xFF50] = this.cartIgnoreWrite;
 	}
-}
+};
 //Helper Functions
 GameBoyCore.prototype.toTypedArray = function (baseArray, memtype) {
 	try {
@@ -9479,7 +9482,7 @@ GameBoyCore.prototype.toTypedArray = function (baseArray, memtype) {
 		cout("Could not convert an array to a typed array: " + error.message, 1);
 		return baseArray;
 	}
-}
+};
 GameBoyCore.prototype.fromTypedArray = function (baseArray) {
 	try {
 		if (!baseArray || !baseArray.length) {
@@ -9495,11 +9498,11 @@ GameBoyCore.prototype.fromTypedArray = function (baseArray) {
 		cout("Conversion from a typed array failed: " + error.message, 1);
 		return baseArray;
 	}
-}
+};
 GameBoyCore.prototype.getTypedArray = function (length, defaultValue, numberType) {
 	try {
 		if (settings[5]) {
-			throw(new Error("Settings forced typed arrays to be disabled."));
+			throw (new Error("Settings forced typed arrays to be disabled."));
 		}
 		switch (numberType) {
 			case "int8":
@@ -9530,4 +9533,4 @@ GameBoyCore.prototype.getTypedArray = function (length, defaultValue, numberType
 		}
 	}
 	return arrayHandle;
-}
+};
