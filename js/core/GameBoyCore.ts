@@ -54,11 +54,11 @@ class GameBoyCore {
 	memoryWriter: MemoryWriter[] = [];						//Array of functions mapped to write to memory
 	memoryHighReader: MemoryReader[] = [];					//Array of functions mapped to read back 0xFFXX memory
 	memoryHighWriter: MemoryWriter[] = [];					//Array of functions mapped to write to 0xFFXX memory
-	ROM: any[] | Int8Array = [];								//The full ROM file dumped to an array.
-	memory: any[] | Int8Array = [];							//Main Core Memory
-	MBCRam: any[] | Int8Array = [];							//Switchable RAM (Used by games for more RAM) for the main memory range 0xA000 - 0xC000.
-	VRAM: any[] | Int8Array = [];								//Extra VRAM bank for GBC.
-	GBCMemory: any[] | Int8Array = [];						//GBC main RAM Banks
+	ROM: number[] | Int8Array = [];								//The full ROM file dumped to an array.
+	memory: number[] | Int8Array = [];							//Main Core Memory
+	MBCRam: number[] | Int8Array = [];							//Switchable RAM (Used by games for more RAM) for the main memory range 0xA000 - 0xC000.
+	VRAM: number[] | Int8Array = [];								//Extra VRAM bank for GBC.
+	GBCMemory: number[] | Int8Array = [];						//GBC main RAM Banks
 	MBC1Mode = false;						//MBC1 Type (4/32, 16/8)
 	MBCRAMBanksEnabled = false;			//MBC RAM Access Control.
 	currMBCRAMBank = 0;					//MBC Currently Indexed RAM Bank
@@ -90,78 +90,78 @@ class GameBoyCore {
 	LCDCONTROL = null;						//Pointer to either LINECONTROL or DISPLAYOFFCONTROL.
 	offscreenWidth: number;
 	offscreenHeight: number;
-	canvas: any;
-	drawContext: any;
-	ROMImage: any;
+	canvas: HTMLCanvasElement;
+	drawContext: CanvasRenderingContext2D;
+	ROMImage: string;
 	lastIteration: number;
 	firstIteration: number;
-	cBATT: any;
-	channel1FrequencyTracker: any;
-	channel1FrequencyCounter: any;
-	channel1totalLength: any;
-	channel1envelopeVolume: any;
-	channel1envelopeType: any;
-	channel1envelopeSweeps: any;
-	channel1envelopeSweepsLast: any;
-	channel1consecutive: any;
-	channel1frequency: any;
-	channel1SweepFault: any;
-	channel1ShadowFrequency: any;
-	channel1timeSweep: any;
-	channel1lastTimeSweep: any;
-	channel1Swept: any;
-	channel1frequencySweepDivider: any;
-	channel1decreaseSweep: any;
-	channel2FrequencyTracker: any;
-	channel2FrequencyCounter: any;
-	channel2totalLength: any;
-	channel2envelopeVolume: any;
-	channel2envelopeType: any;
-	channel2envelopeSweeps: any;
-	channel2envelopeSweepsLast: any;
-	channel2consecutive: any;
-	channel2frequency: any;
-	channel3canPlay: any;
-	channel3totalLength: any;
-	channel3patternType: any;
-	channel3frequency: any;
-	channel3consecutive: any;
-	channel4FrequencyPeriod: any;
-	channel4lastSampleLookup: any;
-	channel4totalLength: any;
-	channel4envelopeVolume: any;
-	channel4currentVolume: any;
-	channel4envelopeType: any;
-	channel4envelopeSweeps: any;
-	channel4envelopeSweepsLast: any;
-	channel4consecutive: any;
-	channel4BitRange: any;
-	channel1DutyTracker: any;
-	channel1CachedDuty: any;
-	channel2DutyTracker: any;
-	channel2CachedDuty: any;
-	channel1Enabled: any;
-	channel2Enabled: any;
-	channel3Enabled: any;
-	channel4Enabled: any;
-	sequencerClocks: any;
-	sequencePosition: any;
-	channel3Counter: any;
-	channel4Counter: any;
-	cachedChannel3Sample: any;
-	cachedChannel4Sample: any;
-	channel3FrequencyPeriod: any;
-	channel3lastSampleLookup: any;
+	cBATT: boolean;
+	channel1FrequencyTracker: number;
+	channel1FrequencyCounter: number;
+	channel1totalLength: number;
+	channel1envelopeVolume: number;
+	channel1envelopeType: boolean;
+	channel1envelopeSweeps: number;
+	channel1envelopeSweepsLast: number;
+	channel1consecutive: boolean;
+	channel1frequency: number;
+	channel1SweepFault: boolean;
+	channel1ShadowFrequency: number;
+	channel1timeSweep: number;
+	channel1lastTimeSweep: number;
+	channel1Swept: boolean;
+	channel1frequencySweepDivider: number;
+	channel1decreaseSweep: boolean;
+	channel2FrequencyTracker: number;
+	channel2FrequencyCounter: number;
+	channel2totalLength: number;
+	channel2envelopeVolume: number;
+	channel2envelopeType: boolean;
+	channel2envelopeSweeps: number;
+	channel2envelopeSweepsLast: number;
+	channel2consecutive: boolean;
+	channel2frequency: number;
+	channel3canPlay: boolean;
+	channel3totalLength: number;
+	channel3patternType: number;
+	channel3frequency: number;
+	channel3consecutive: boolean;
+	channel4FrequencyPeriod: number;
+	channel4lastSampleLookup: number;
+	channel4totalLength: number;
+	channel4envelopeVolume: number;
+	channel4currentVolume: number;
+	channel4envelopeType: boolean;
+	channel4envelopeSweeps: number;
+	channel4envelopeSweepsLast: number;
+	channel4consecutive: boolean;
+	channel4BitRange: number;
+	channel1DutyTracker: number;
+	channel1CachedDuty: boolean[];
+	channel2DutyTracker: number;
+	channel2CachedDuty: boolean[];
+	channel1Enabled: boolean;
+	channel2Enabled: boolean;
+	channel3Enabled: boolean;
+	channel4Enabled: boolean;
+	sequencerClocks: number;
+	sequencePosition: number;
+	channel3Counter: number;
+	channel4Counter: number;
+	cachedChannel3Sample: number;
+	cachedChannel4Sample: number;
+	channel3FrequencyPeriod: number;
+	channel3lastSampleLookup: number;
 	ROMBankEdge: number;
 	channel4VolumeShifter: number;
-	openRTC: any;
+	openRTC: (any: any) => any;
 	numROMBanks: number;
 	clocksPerSecond: number;
 	openMBC: any;
-	resizer: any;
+	resizer: Resize;
 	canvasOffscreen: HTMLCanvasElement;
-	drawContextOffscreen: any;
-	drawContextOnscreen: any;
+	drawContextOffscreen: CanvasRenderingContext2D;
+	drawContextOnscreen: CanvasRenderingContext2D;
 	audioResamplerFirstPassFactor: number;
 	downSampleInputDivider: number;
 	audioBuffer: Int8Array;
@@ -1532,10 +1532,6 @@ class GameBoyCore {
 			// "image-rendering: " + ((settings.filterImageScaling) ? "optimizeQuality" : "-o-crisp-edges") + ";" +
 			// "image-rendering: " + ((settings.filterImageScaling) ? "optimizeQuality" : "-moz-crisp-edges") + ";" +
 			// "-ms-interpolation-mode: " + ((settings.filterImageScaling) ? "bicubic" : "nearest-neighbor") + ";");
-			this.drawContextOffscreen.webkitImageSmoothingEnabled = settings.filterImageScaling;
-			this.drawContextOffscreen.mozImageSmoothingEnabled = settings.filterImageScaling;
-			this.drawContextOnscreen.webkitImageSmoothingEnabled = settings.filterImageScaling;
-			this.drawContextOnscreen.mozImageSmoothingEnabled = settings.filterImageScaling;
 			//Get a CanvasPixelArray buffer:
 			try {
 				this.canvasBuffer = this.drawContextOffscreen.createImageData(this.offscreenWidth, this.offscreenHeight);

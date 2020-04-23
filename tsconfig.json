@@ -1,7 +1,7 @@
 {
     "compilerOptions": {
         "module": "None",
-        "sourceMap": true
+        "sourceMap": true,
         // "noUnusedParameters": true
     },
     "exclude": [
