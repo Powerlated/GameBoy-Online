@@ -5,12 +5,12 @@ class Resampler {
 	channels: number;
 	outputBufferSize: any;
 	noReturn: boolean;
-	resampler: (buffer: any) => any;
+	resampler: any;
 	ratioWeight: number;
 	lastWeight: number;
 	tailExists: boolean;
 	outputBuffer: any;
-	lastOutput: Float32Array;
+	lastOutput: any[] | Float32Array;
 
 	constructor(fromSampleRate, toSampleRate, channels, outputBufferSize, noReturn) {
 		this.fromSampleRate = fromSampleRate;

@@ -2,7 +2,7 @@
     "compilerOptions": {
         "module": "None",
         "sourceMap": true,
-        "noImplicitThis": true
+        // "noImplicitThis": true
         // "noUnusedParameters": true
     },
     "exclude": [
