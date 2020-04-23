@@ -34,21 +34,21 @@ function windowingInitialize() {
 		cout("Fatal windowing error: \"" + error.message + "\" file:" + error.fileName + " line: " + error.lineNumber, 2);
 	}
 	//Update the settings to the emulator's default:
-	document.getElementById("enable_sound").checked = settings[0];
-	document.getElementById("enable_gbc_bios").checked = settings[1];
-	document.getElementById("disable_colors").checked = settings[2];
-	document.getElementById("rom_only_override").checked = settings[9];
-	document.getElementById("mbc_enable_override").checked = settings[10];
-	document.getElementById("enable_colorization").checked = settings[4];
-	document.getElementById("do_minimal").checked = showAsMinimal;
-	document.getElementById("software_resizing").checked = settings[12];
-	document.getElementById("typed_arrays_disallow").checked = settings[5];
-	document.getElementById("gb_boot_rom_utilized").checked = settings[11];
-	document.getElementById("resize_smoothing").checked = settings[13];
-    document.getElementById("channel1").checked = settings[14][0];
-    document.getElementById("channel2").checked = settings[14][1];
-    document.getElementById("channel3").checked = settings[14][2];
-    document.getElementById("channel4").checked = settings[14][3];
+	(document.getElementById("enable_sound") as HTMLInputElement).checked = settings[0];
+	(document.getElementById("enable_gbc_bios") as HTMLInputElement).checked = settings[1];
+	(document.getElementById("disable_colors") as HTMLInputElement).checked = settings[2];
+	(document.getElementById("rom_only_override") as HTMLInputElement).checked = settings[9];
+	(document.getElementById("mbc_enable_override") as HTMLInputElement).checked = settings[10];
+	(document.getElementById("enable_colorization") as HTMLInputElement).checked = settings[4];
+	(document.getElementById("do_minimal") as HTMLInputElement).checked = showAsMinimal;
+	(document.getElementById("software_resizing") as HTMLInputElement).checked = settings[12];
+	(document.getElementById("typed_arrays_disallow") as HTMLInputElement).checked = settings[5];
+	(document.getElementById("gb_boot_rom_utilized") as HTMLInputElement).checked = settings[11];
+	(document.getElementById("resize_smoothing") as HTMLInputElement).checked = settings[13];
+    (document.getElementById("channel1") as HTMLInputElement).checked = settings[14][0];
+    (document.getElementById("channel2") as HTMLInputElement).checked = settings[14][1];
+    (document.getElementById("channel3") as HTMLInputElement).checked = settings[14][2];
+    (document.getElementById("channel4") as HTMLInputElement).checked = settings[14][3];
 }
 function registerGUIEvents() {
 	cout("In registerGUIEvents() : Registering GUI Events.", -1);
@@ -257,59 +257,59 @@ function registerGUIEvents() {
 		saveSRAM();
 	});
 	addEvent("click", document.getElementById("enable_sound"), function () {
-		settings[0] = document.getElementById("enable_sound").checked;
+		settings[0] = (document.getElementById("enable_sound")! as HTMLInputElement).checked;
 		if (GameBoyEmulatorInitialized()) {
 			gameboy.initSound();
 		}
 	});
 	addEvent("click", document.getElementById("disable_colors"), function () {
-		settings[2] = document.getElementById("disable_colors").checked;
+		settings[2] = (document.getElementById("disable_colors")! as HTMLInputElement).checked;
 	});
 	addEvent("click", document.getElementById("rom_only_override"), function () {
-		settings[9] = document.getElementById("rom_only_override").checked;
+		settings[9] = (document.getElementById("rom_only_override")! as HTMLInputElement).checked;
 	});
 	addEvent("click", document.getElementById("mbc_enable_override"), function () {
-		settings[10] = document.getElementById("mbc_enable_override").checked;
+		settings[10] = (document.getElementById("mbc_enable_override") as HTMLInputElement).checked;
 	});
 	addEvent("click", document.getElementById("enable_gbc_bios"), function () {
-		settings[1] = document.getElementById("enable_gbc_bios").checked;
+		settings[1] = (document.getElementById("enable_gbc_bios") as HTMLInputElement).checked;
 	});
 	addEvent("click", document.getElementById("enable_colorization"), function () {
-		settings[4] = document.getElementById("enable_colorization").checked;
+		settings[4] = (document.getElementById("enable_colorization") as HTMLInputElement).checked;
 	});
 	addEvent("click", document.getElementById("do_minimal"), function () {
-		showAsMinimal = document.getElementById("do_minimal").checked;
+		showAsMinimal = (document.getElementById("do_minimal") as HTMLInputElement).checked;
 		fullscreenCanvas.className = (showAsMinimal) ? "minimum" : "maximum";
 	});
 	addEvent("click", document.getElementById("software_resizing"), function () {
-		settings[12] = document.getElementById("software_resizing").checked;
+		settings[12] = (document.getElementById("software_resizing") as HTMLInputElement).checked;
 		if (GameBoyEmulatorInitialized()) {
 			gameboy.initLCD();
 		}
 	});
 	addEvent("click", document.getElementById("typed_arrays_disallow"), function () {
-		settings[5] = document.getElementById("typed_arrays_disallow").checked;
+		settings[5] = (document.getElementById("typed_arrays_disallow") as HTMLInputElement).checked;
 	});
 	addEvent("click", document.getElementById("gb_boot_rom_utilized"), function () {
-		settings[11] = document.getElementById("gb_boot_rom_utilized").checked;
+		settings[11] = (document.getElementById("gb_boot_rom_utilized") as HTMLInputElement).checked;
 	});
 	addEvent("click", document.getElementById("resize_smoothing"), function () {
-		settings[13] = document.getElementById("resize_smoothing").checked;
+		settings[13] = (document.getElementById("resize_smoothing") as HTMLInputElement).checked;
 		if (GameBoyEmulatorInitialized()) {
 			gameboy.initLCD();
 		}
 	});
     addEvent("click", document.getElementById("channel1"), function () {
-        settings[14][0] = document.getElementById("channel1").checked;
+        settings[14][0] = (document.getElementById("channel1") as HTMLInputElement).checked;
     });
     addEvent("click", document.getElementById("channel2"), function () {
-        settings[14][1] = document.getElementById("channel2").checked;
+        settings[14][1] = (document.getElementById("channel2") as HTMLInputElement).checked;
     });
     addEvent("click", document.getElementById("channel3"), function () {
-        settings[14][2] = document.getElementById("channel3").checked;
+        settings[14][2] = (document.getElementById("channel3") as HTMLInputElement).checked;
     });
     addEvent("click", document.getElementById("channel4"), function () {
-        settings[14][3] = document.getElementById("channel4").checked;
+        settings[14][3] = (document.getElementById("channel4") as HTMLInputElement).checked;
     });
 	addEvent("click", document.getElementById("view_fullscreen"), fullscreenPlayer);
 	new popupMenu(document.getElementById("GameBoy_view_menu"), document.getElementById("GameBoy_view_popup"));
@@ -401,7 +401,9 @@ function findValue(key) {
 	}
 	catch (error) {
 		//An older Gecko 1.8.1/1.9.0 method of storage (Deprecated due to the obvious security hole):
+		// @ts-ignore
 		if (window.globalStorage[location.hostname].getItem(key) != null) {
+			// @ts-ignore
 			return JSON.parse(window.globalStorage[location.hostname].getItem(key));
 		}
 	}
@@ -414,6 +416,7 @@ function setValue(key, value) {
 	}
 	catch (error) {
 		//An older Gecko 1.8.1/1.9.0 method of storage (Deprecated due to the obvious security hole):
+		// @ts-ignore
 		window.globalStorage[location.hostname].setItem(key, JSON.stringify(value));
 	}
 }
@@ -424,6 +427,7 @@ function deleteValue(key) {
 	}
 	catch (error) {
 		//An older Gecko 1.8.1/1.9.0 method of storage (Deprecated due to the obvious security hole):
+		// @ts-ignore
 		window.globalStorage[location.hostname].removeItem(key);
 	}
 }
@@ -438,7 +442,7 @@ function refreshFreezeListing() {
 	storageListMasterDivSub.id = "freezeListingMasterContainerSub";
 	var keys = getLocalStorageKeys();
 	while (keys.length > 0) {
-		key = keys.shift();
+		let key = keys.shift();
 		if (key.substring(0, 7) == "FREEZE_") {
 			storageListMasterDivSub.appendChild(outputFreezeStateRequestLink(key));
 		}
@@ -465,7 +469,7 @@ function refreshStorageListing() {
 		storageListMasterDivSub.appendChild(outputLocalStorageRequestLink(keys[index]));
 	}
 	storageListMasterDiv.appendChild(storageListMasterDivSub);
-	var linkToManipulate = document.getElementById("download_local_storage_dba");
+	var linkToManipulate = (document.getElementById("download_local_storage_dba") as HTMLAnchorElement);
 	linkToManipulate.href = "data:application/octet-stream;base64," + base64(generateMultiBlob(blobPairs));
 	linkToManipulate.download = "gameboy_color_saves.export";
 }
@@ -549,6 +553,7 @@ function checkStorageLength() {
 	}
 	catch (error) {
 		//An older Gecko 1.8.1/1.9.0 method of storage (Deprecated due to the obvious security hole):
+		// @ts-ignore
 		return window.globalStorage[location.hostname].length;
 	}
 }
@@ -576,6 +581,7 @@ function findKey(keyNum) {
 	}
 	catch (error) {
 		//An older Gecko 1.8.1/1.9.0 method of storage (Deprecated due to the obvious security hole):
+		// @ts-ignore
 		return window.globalStorage[location.hostname].key(keyNum);
 	}
 	return null;

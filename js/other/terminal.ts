@@ -1,6 +1,6 @@
 function cout(message, colorIndex) {
 	var terminal_output = document.getElementById("terminal_output");
-	if ((colorIndex != 0 || DEBUG_MESSAGES) && (colorIndex != -1 || DEBUG_WINDOWING)) {
+	if ((colorIndex != 0 || (window as any).DEBUG_MESSAGES) && (colorIndex != -1 || (window as any).DEBUG_WINDOWING)) {
 		var lineout = document.createElement('span');
 		lineout.appendChild(document.createTextNode(message));
 		switch (colorIndex) {

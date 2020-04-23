@@ -1,23 +1,61 @@
 "use strict";
+
+type GameBoyCoreSettings = {
+	/* 0  */ enableSound: boolean,
+	/* 1  */ useBootRom: boolean,
+	/* 2  */ dmgModePriority: boolean,
+	/* 3  */ setVolumeLevel: number,
+	/* 4  */ colorizeDmgMode: boolean,
+	/* 5  */ disallowTypedArrays: boolean,
+	/* 6  */ emulatorLoopInterval: number,
+	/* 7  */ minAudioBuffer: number,
+	/* 8  */ maxAudioBuffer: number,
+	/* 9  */ mbc1Override: boolean,
+	/* 10 */ mbcRamDisableOverride: boolean,
+	/* 11 */ useDmgBootrom: boolean,
+	/* 12 */ jsCanvasScale: boolean,
+	/* 13 */ filterImageScaling: boolean,
+	/* 14 */ channels: boolean[];
+};
+
 var gameboy = null;						//GameBoyCore object.
 var gbRunInterval = null;				//GameBoyCore Timer
-var settings = [						//Some settings.
-	true, 								//Turn on sound.
-	true,								//Boot with boot ROM first?
-	false,								//Give priority to GameBoy mode
-	1,									//Volume level set.
-	true,								//Colorize GB mode?
-	false,								//Disallow typed arrays?
-	8,									//Interval for the emulator loop.
-	10,									//Audio buffer minimum span amount over x interpreter iterations.
-	20,									//Audio buffer maximum span amount over x interpreter iterations.
-	false,								//Override to allow for MBC1 instead of ROM only (compatibility for broken 3rd-party cartridges).
-	false,								//Override MBC RAM disabling and always allow reading and writing to the banks.
-	false,								//Use the GameBoy boot ROM instead of the GameBoy Color boot ROM.
-	false,								//Scale the canvas in JS, or let the browser scale the canvas?
-	true,								//Use image smoothing based scaling?
-    [true, true, true, true]            //User controlled channel enables.
-];
+// var settings = [						//Some settings.
+// 0 	true, 								//Turn on sound.
+// 1 	true,								//Boot with boot ROM first?
+// 2 	false,								//Give priority to GameBoy mode
+// 3 	1,									//Volume level set.
+// 4 	true,								//Colorize GB mode?
+// 5 	false,								//Disallow typed arrays?
+// 6 	8,									//Interval for the emulator loop.
+// 7 	10,									//Audio buffer minimum span amount over x interpreter iterations.
+// 8 	20,									//Audio buffer maximum span amount over x interpreter iterations.
+// 9 	false,								//Override to allow for MBC1 instead of ROM only (compatibility for broken 3rd-party cartridges).
+// 10 	false,								//Override MBC RAM disabling and always allow reading and writing to the banks.
+// 11 	false,								//Use the GameBoy boot ROM instead of the GameBoy Color boot ROM.
+// 12 	false,								//Scale the canvas in JS, or let the browser scale the canvas?
+// 13 	true,								//Use image smoothing based scaling?
+// 14 	[true, true, true, true]            //User controlled channel enables.
+// ];
+
+var settings: GameBoyCoreSettings = {
+	enableSound: true,
+	useBootRom: true,
+	dmgModePriority: false,
+	setVolumeLevel: 1,
+	colorizeDmgMode: true,
+	disallowTypedArrays: false,
+	emulatorLoopInterval: 8,
+	minAudioBuffer: 10,
+	maxAudioBuffer: 20,
+	mbc1Override: false,
+	mbcRamDisableOverride: false,
+	useDmgBootrom: false,
+	jsCanvasScale: false,
+	filterImageScaling: true,
+	channels: [true, true, true, true]
+};
+
 function start(canvas, ROM) {
 	clearLastEmulation();
 	autoSave();	//If we are about to load a new game, then save the last one...
@@ -36,10 +74,10 @@ function run() {
 			gameboy.firstIteration = dateObj.getTime();
 			gameboy.iterations = 0;
 			gbRunInterval = setInterval(function () {
-				if (!document.hidden && !document.msHidden && !document.mozHidden && !document.webkitHidden) {
+				if (!document.hidden) {
 					gameboy.run();
 				}
-			}, settings[6]);
+			}, settings.emulatorLoopInterval);
 		}
 		else {
 			cout("The GameBoy core is already running.", 1);
@@ -287,7 +325,10 @@ function generateMultiBlob(blobPairs) {
 	saveString = "EMULATOR_DATA" + to_little_endian_dword(totalLength) + saveString;
 	return saveString;
 }
-function decodeBlob(blobData) {
+
+type BlobData = String;
+
+function decodeBlob(blobData: BlobData) {
 	/*Format is as follows:
 		- 13 byte string "EMULATOR_DATA"
 		- 4 byte total size (including these 4 bytes).
@@ -301,13 +342,17 @@ function decodeBlob(blobData) {
 		}
 	*/
 	var length = blobData.length;
-	var blobProperties = {};
+	var blobProperties: {
+		consoleID?: string | null,
+		length?: number,
+		blobs?: any[];
+	} = {};
 	blobProperties.consoleID = null;
 	var blobsCount = -1;
 	blobProperties.blobs = [];
 	if (length > 17) {
 		if (blobData.substring(0, 13) == "EMULATOR_DATA") {
-			var length = Math.min(((blobData.charCodeAt(16) & 0xFF) << 24) | ((blobData.charCodeAt(15) & 0xFF) << 16) | ((blobData.charCodeAt(14) & 0xFF) << 8) | (blobData.charCodeAt(13) & 0xFF), length);
+			var length: number = Math.min(((blobData.charCodeAt(16) & 0xFF) << 24) | ((blobData.charCodeAt(15) & 0xFF) << 16) | ((blobData.charCodeAt(14) & 0xFF) << 8) | (blobData.charCodeAt(13) & 0xFF), length);
 			var consoleIDLength = blobData.charCodeAt(17) & 0xFF;
 			if (length > 17 + consoleIDLength) {
 				blobProperties.consoleID = blobData.substring(18, 18 + consoleIDLength);
@@ -323,7 +368,7 @@ function decodeBlob(blobData) {
 							blobLength = ((blobData.charCodeAt(index + 3) & 0xFF) << 24) | ((blobData.charCodeAt(index + 2) & 0xFF) << 16) | ((blobData.charCodeAt(index + 1) & 0xFF) << 8) | (blobData.charCodeAt(index) & 0xFF);
 							index += 4;
 							if (index + blobLength <= length) {
-								blobProperties.blobs[blobsCount].blobContent =  blobData.substring(index, index + blobLength);
+								blobProperties.blobs[blobsCount].blobContent = blobData.substring(index, index + blobLength);
 								index += blobLength;
 							}
 							else {
@@ -403,7 +448,7 @@ function initNewCanvas() {
 //Call this when resizing the canvas:
 function initNewCanvasSize() {
 	if (GameBoyEmulatorInitialized()) {
-		if (!settings[12]) {
+		if (!settings.jsCanvasScale) {
 			if (gameboy.onscreenWidth != 160 || gameboy.onscreenHeight != 144) {
 				gameboy.initLCD();
 			}
