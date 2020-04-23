@@ -34,42 +34,42 @@ function windowingInitialize() {
 		cout("Fatal windowing error: \"" + error.message + "\" file:" + error.fileName + " line: " + error.lineNumber, 2);
 	}
 	//Update the settings to the emulator's default:
-	(document.getElementById("enable_sound") as HTMLInputElement).checked = settings[0];
-	(document.getElementById("enable_gbc_bios") as HTMLInputElement).checked = settings[1];
-	(document.getElementById("disable_colors") as HTMLInputElement).checked = settings[2];
-	(document.getElementById("rom_only_override") as HTMLInputElement).checked = settings[9];
-	(document.getElementById("mbc_enable_override") as HTMLInputElement).checked = settings[10];
-	(document.getElementById("enable_colorization") as HTMLInputElement).checked = settings[4];
+	(document.getElementById("enable_sound") as HTMLInputElement).checked = settings.enableSound;
+	(document.getElementById("enable_gbc_bios") as HTMLInputElement).checked = settings.useBootRom;
+	(document.getElementById("disable_colors") as HTMLInputElement).checked = settings.dmgModePriority;
+	(document.getElementById("rom_only_override") as HTMLInputElement).checked = settings.mbc1Override;
+	(document.getElementById("mbc_enable_override") as HTMLInputElement).checked = settings.mbcRamDisableOverride;
+	(document.getElementById("enable_colorization") as HTMLInputElement).checked = settings.colorizeDmgMode;
 	(document.getElementById("do_minimal") as HTMLInputElement).checked = showAsMinimal;
-	(document.getElementById("software_resizing") as HTMLInputElement).checked = settings[12];
-	(document.getElementById("typed_arrays_disallow") as HTMLInputElement).checked = settings[5];
-	(document.getElementById("gb_boot_rom_utilized") as HTMLInputElement).checked = settings[11];
+	(document.getElementById("software_resizing") as HTMLInputElement).checked = settings.jsCanvasScale;
+	(document.getElementById("typed_arrays_disallow") as HTMLInputElement).checked = settings.disallowTypedArrays;
+	(document.getElementById("gb_boot_rom_utilized") as HTMLInputElement).checked = settings.useDmgBootrom;
 	(document.getElementById("resize_smoothing") as HTMLInputElement).checked = settings[13];
-    (document.getElementById("channel1") as HTMLInputElement).checked = settings[14][0];
-    (document.getElementById("channel2") as HTMLInputElement).checked = settings[14][1];
-    (document.getElementById("channel3") as HTMLInputElement).checked = settings[14][2];
-    (document.getElementById("channel4") as HTMLInputElement).checked = settings[14][3];
+	(document.getElementById("channel1") as HTMLInputElement).checked = settings.channels[0];
+	(document.getElementById("channel2") as HTMLInputElement).checked = settings.channels[1];
+	(document.getElementById("channel3") as HTMLInputElement).checked = settings.channels[2];
+	(document.getElementById("channel4") as HTMLInputElement).checked = settings.channels[3];
 }
 function registerGUIEvents() {
 	cout("In registerGUIEvents() : Registering GUI Events.", -1);
 	addEvent("click", document.getElementById("terminal_clear_button"), clear_terminal);
 	addEvent("click", document.getElementById("local_storage_list_refresh_button"), refreshStorageListing);
-	addEvent("click", document.getElementById("terminal_close_button"), function () { windowStacks[1].hide() });
-	addEvent("click", document.getElementById("about_close_button"), function () { windowStacks[2].hide() });
-	addEvent("click", document.getElementById("settings_close_button"), function () { windowStacks[3].hide() });
-	addEvent("click", document.getElementById("input_select_close_button"), function () { windowStacks[4].hide() });
-	addEvent("click", document.getElementById("instructions_close_button"), function () { windowStacks[5].hide() });
-	addEvent("click", document.getElementById("local_storage_list_close_button"), function () { windowStacks[7].hide() });
-	addEvent("click", document.getElementById("local_storage_popup_close_button"), function () { windowStacks[6].hide() });
-	addEvent("click", document.getElementById("save_importer_close_button"), function () { windowStacks[9].hide() });
-	addEvent("click", document.getElementById("freeze_list_close_button"), function () { windowStacks[8].hide() });
-	addEvent("click", document.getElementById("GameBoy_about_menu"), function () { windowStacks[2].show() });
-	addEvent("click", document.getElementById("GameBoy_settings_menu"), function () { windowStacks[3].show() });
+	addEvent("click", document.getElementById("terminal_close_button"), function () { windowStacks[1].hide(); });
+	addEvent("click", document.getElementById("about_close_button"), function () { windowStacks[2].hide(); });
+	addEvent("click", document.getElementById("settings_close_button"), function () { windowStacks[3].hide(); });
+	addEvent("click", document.getElementById("input_select_close_button"), function () { windowStacks[4].hide(); });
+	addEvent("click", document.getElementById("instructions_close_button"), function () { windowStacks[5].hide(); });
+	addEvent("click", document.getElementById("local_storage_list_close_button"), function () { windowStacks[7].hide(); });
+	addEvent("click", document.getElementById("local_storage_popup_close_button"), function () { windowStacks[6].hide(); });
+	addEvent("click", document.getElementById("save_importer_close_button"), function () { windowStacks[9].hide(); });
+	addEvent("click", document.getElementById("freeze_list_close_button"), function () { windowStacks[8].hide(); });
+	addEvent("click", document.getElementById("GameBoy_about_menu"), function () { windowStacks[2].show(); });
+	addEvent("click", document.getElementById("GameBoy_settings_menu"), function () { windowStacks[3].show(); });
 	addEvent("click", document.getElementById("local_storage_list_menu"), function () { refreshStorageListing(); windowStacks[7].show(); });
 	addEvent("click", document.getElementById("freeze_list_menu"), function () { refreshFreezeListing(); windowStacks[8].show(); });
-	addEvent("click", document.getElementById("view_importer"), function () { windowStacks[9].show() });
+	addEvent("click", document.getElementById("view_importer"), function () { windowStacks[9].show(); });
 	addEvent("keydown", document, keyDown);
-	addEvent("keyup", document,  function (event) {
+	addEvent("keyup", document, function (event) {
 		if (event.keyCode == 27) {
 			//Fullscreen on/off
 			fullscreenPlayer();
@@ -143,7 +143,7 @@ function registerGUIEvents() {
 							else {
 								cout("loading file, please wait...", 0);
 							}
-						}
+						};
 						binaryHandle.readAsBinaryString(this.files[this.files.length - 1]);
 					}
 					catch (error) {
@@ -157,7 +157,7 @@ function registerGUIEvents() {
 						catch (error) {
 							alert(error.message + " file: " + error.fileName + " line: " + error.lineNumber);
 						}
-						
+
 					}
 				}
 				else {
@@ -195,7 +195,7 @@ function registerGUIEvents() {
 							else {
 								cout("importing file, please wait...", 0);
 							}
-						}
+						};
 						binaryHandle.readAsBinaryString(this.files[this.files.length - 1]);
 					}
 					catch (error) {
@@ -209,7 +209,7 @@ function registerGUIEvents() {
 						catch (error) {
 							alert(error.message + " file: " + error.fileName + " line: " + error.lineNumber);
 						}
-						
+
 					}
 				}
 				else {
@@ -299,22 +299,22 @@ function registerGUIEvents() {
 			gameboy.initLCD();
 		}
 	});
-    addEvent("click", document.getElementById("channel1"), function () {
-        settings[14][0] = (document.getElementById("channel1") as HTMLInputElement).checked;
-    });
-    addEvent("click", document.getElementById("channel2"), function () {
-        settings[14][1] = (document.getElementById("channel2") as HTMLInputElement).checked;
-    });
-    addEvent("click", document.getElementById("channel3"), function () {
-        settings[14][2] = (document.getElementById("channel3") as HTMLInputElement).checked;
-    });
-    addEvent("click", document.getElementById("channel4"), function () {
-        settings[14][3] = (document.getElementById("channel4") as HTMLInputElement).checked;
-    });
+	addEvent("click", document.getElementById("channel1"), function () {
+		settings[14][0] = (document.getElementById("channel1") as HTMLInputElement).checked;
+	});
+	addEvent("click", document.getElementById("channel2"), function () {
+		settings[14][1] = (document.getElementById("channel2") as HTMLInputElement).checked;
+	});
+	addEvent("click", document.getElementById("channel3"), function () {
+		settings[14][2] = (document.getElementById("channel3") as HTMLInputElement).checked;
+	});
+	addEvent("click", document.getElementById("channel4"), function () {
+		settings[14][3] = (document.getElementById("channel4") as HTMLInputElement).checked;
+	});
 	addEvent("click", document.getElementById("view_fullscreen"), fullscreenPlayer);
 	new popupMenu(document.getElementById("GameBoy_view_menu"), document.getElementById("GameBoy_view_popup"));
-	addEvent("click", document.getElementById("view_terminal"), function () { windowStacks[1].show() });
-	addEvent("click", document.getElementById("view_instructions"), function () { windowStacks[5].show() });
+	addEvent("click", document.getElementById("view_terminal"), function () { windowStacks[1].show(); });
+	addEvent("click", document.getElementById("view_instructions"), function () { windowStacks[5].show(); });
 	addEvent("mouseup", document.getElementById("gfx"), initNewCanvasSize);
 	addEvent("resize", window, initNewCanvasSize);
 	addEvent("unload", window, function () {
@@ -453,7 +453,7 @@ function outputFreezeStateRequestLink(keyName) {
 	var linkNode = generateLink("javascript:runFreeze(\"" + keyName + "\")", keyName);
 	var storageContainerDiv = document.createElement("div");
 	storageContainerDiv.className = "storageListingContainer";
-	storageContainerDiv.appendChild(linkNode)
+	storageContainerDiv.appendChild(linkNode);
 	return storageContainerDiv;
 }
 function refreshStorageListing() {
@@ -488,7 +488,7 @@ function outputLocalStorageRequestLink(keyName) {
 	var linkNode = generateLink("javascript:popupStorageDialog(\"" + keyName + "\")", keyName);
 	var storageContainerDiv = document.createElement("div");
 	storageContainerDiv.className = "storageListingContainer";
-	storageContainerDiv.appendChild(linkNode)
+	storageContainerDiv.appendChild(linkNode);
 	return storageContainerDiv;
 }
 function popupStorageDialog(keyName) {
@@ -637,7 +637,7 @@ function mouseEnterVerify(oElement, event) {
 	return !isDescendantOf(oElement, (typeof event.target != "undefined") ? event.target : event.srcElement) && isDescendantOf(oElement, (typeof event.relatedTarget != "undefined") ? event.relatedTarget : event.fromElement);
 }
 function addEvent(sEvent, oElement, fListener) {
-	try {	
+	try {
 		oElement.addEventListener(sEvent, fListener, false);
 		cout("In addEvent() : Standard addEventListener() called to add a(n) \"" + sEvent + "\" event.", -1);
 	}
@@ -647,7 +647,7 @@ function addEvent(sEvent, oElement, fListener) {
 	}
 }
 function removeEvent(sEvent, oElement, fListener) {
-	try {	
+	try {
 		oElement.removeEventListener(sEvent, fListener, false);
 		cout("In removeEvent() : Standard removeEventListener() called to remove a(n) \"" + sEvent + "\" event.", -1);
 	}

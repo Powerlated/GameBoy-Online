@@ -1,6 +1,8 @@
 {
     "compilerOptions": {
-        "module": "None"
+        "module": "None",
+        "sourceMap": true
+        // "noUnusedParameters": true
     },
     "exclude": [
         "node_modules"

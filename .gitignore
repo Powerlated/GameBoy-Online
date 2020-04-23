@@ -7,3 +7,7 @@ js/other/resize.js
 js/other/terminal.js
 js/other/windowStack.js
 js/other/XAudioServer.js
+
+js/core/*.js
+
+*.map
